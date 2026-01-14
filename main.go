@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/protobuf/proto"
 	"tinygo.org/x/bluetooth"
 )
+
+var verbose bool
 
 //go:generate protoc --go_out=. --go_opt=paths=source_relative pb/comm_v4.proto
 
@@ -43,13 +46,55 @@ var (
 	_ = pb.FromDevice{}
 )
 
+// DeviceInfo represents the JSON response from the device (API v1.0+)
+type DeviceInfo struct {
+	ID         string `json:"id"`
+	FWVersion  string `json:"fwv"`
+	APIVersion string `json:"apiVersion"`
+	Voltage    string `json:"voltage"`
+	Level      string `json:"level"`
+}
+
+func debugf(format string, args ...interface{}) {
+	if verbose {
+		fmt.Printf("[DEBUG] "+format+"\n", args...)
+	}
+}
+
 func main() {
-	if len(os.Args) < 2 {
+	// Define flags
+	fs := flag.NewFlagSet("sfpl-flasher", flag.ContinueOnError)
+	fs.BoolVar(&verbose, "verbose", false, "Enable verbose debug output")
+	fs.BoolVar(&verbose, "v", false, "Enable verbose debug output (shorthand)")
+
+	// Parse flags from os.Args[1:] if available
+	args := os.Args[1:]
+	if len(args) == 0 {
 		printUsage()
 		os.Exit(1)
 	}
 
-	command := os.Args[1]
+	// Find where the command is (skip flags)
+	commandIdx := 0
+	for i, arg := range args {
+		if !strings.HasPrefix(arg, "-") {
+			commandIdx = i
+			break
+		}
+	}
+
+	// Parse flags up to the command
+	if commandIdx > 0 {
+		fs.Parse(args[:commandIdx])
+	}
+
+	if commandIdx >= len(args) {
+		printUsage()
+		os.Exit(1)
+	}
+
+	command := args[commandIdx]
+	commandArgs := args[commandIdx+1:]
 
 	// Connect to device
 	device := connectToDevice()
@@ -64,19 +109,23 @@ func main() {
 	case "read-eeprom":
 		cmdReadEEPROM(device)
 	case "write-eeprom":
-		if len(os.Args) < 3 {
+		if len(commandArgs) < 1 {
 			log.Fatal("Usage: sfpl-flasher write-eeprom <file.bin>")
 		}
-		cmdWriteEEPROM(device, os.Args[2])
+		cmdWriteEEPROM(device, commandArgs[0])
 	case "erase-eeprom":
 		cmdEraseEEPROM(device)
 	case "stop":
 		cmdStop(device)
 	case "firmware-update":
-		if len(os.Args) < 3 {
+		if len(commandArgs) < 1 {
 			log.Fatal("Usage: sfpl-flasher firmware-update <firmware.bin>")
 		}
-		cmdFirmwareUpdate(device, os.Args[2])
+		cmdFirmwareUpdate(device, commandArgs[0])
+	case "explore":
+		cmdExplore(device)
+	case "test-api":
+		cmdTestAPI(device)
 	default:
 		fmt.Printf("Unknown command: %s\n\n", command)
 		printUsage()
@@ -86,7 +135,9 @@ func main() {
 
 func printUsage() {
 	fmt.Println("SFP Wizard Flasher - BLE Command Tool")
-	fmt.Println("\nUsage: sfpl-flasher <command> [args]")
+	fmt.Println("\nUsage: sfpl-flasher [flags] <command> [args]")
+	fmt.Println("\nFlags:")
+	fmt.Println("  -v, --verbose    Enable verbose debug output")
 	fmt.Println("\nSFP EEPROM Commands (Text-based BLE API):")
 	fmt.Println("  version              Get firmware version")
 	fmt.Println("  status               Get device status (battery, SFP presence, etc.)")
@@ -96,11 +147,15 @@ func printUsage() {
 	fmt.Println("  stop                 Stop current SFP operation")
 	fmt.Println("\nFirmware Commands (Protobuf-based BLE API):")
 	fmt.Println("  firmware-update <file>  Update device firmware (NOT YET IMPLEMENTED)")
+	fmt.Println("\nDebug Commands:")
+	fmt.Println("  explore              Show all BLE services and characteristics")
+	fmt.Println("  test-api             Test various API endpoints to see what the device supports")
 	fmt.Println("\nExamples:")
 	fmt.Println("  sfpl-flasher version")
-	fmt.Println("  sfpl-flasher status")
+	fmt.Println("  sfpl-flasher -v status")
 	fmt.Println("  sfpl-flasher read-eeprom")
 	fmt.Println("  sfpl-flasher write-eeprom backup.bin")
+	fmt.Println("  sfpl-flasher --verbose explore")
 }
 
 func connectToDevice() bluetooth.Device {
@@ -110,33 +165,63 @@ func connectToDevice() bluetooth.Device {
 		log.Fatal("Failed to enable Bluetooth:", err)
 	}
 
-	fmt.Println("Scanning for SFP Wizard...")
+	fmt.Println("Scanning for BLE devices...")
+	fmt.Println("Looking for: 'SFP-Wizard', 'SFP Wizard', or any device containing 'SFP'")
+	fmt.Println("---")
+
 	var deviceResult bluetooth.ScanResult
 	var found bool
+	deviceCount := 0
 
 	err = adapter.Scan(func(adapter *bluetooth.Adapter, result bluetooth.ScanResult) {
+		deviceCount++
 		name := result.LocalName()
-		if name == "SFP-Wizard" || name == "SFP Wizard" || strings.Contains(name, "SFP") {
+		address, _ := result.Address.MarshalText()
+
+		// Print every device found
+		if name != "" {
+			fmt.Printf("[%d] Found: '%s' (%s)\n", deviceCount, name, string(address))
+		} else {
+			fmt.Printf("[%d] Found: <no name> (%s)\n", deviceCount, string(address))
+		}
+
+		// Check if it matches our target (case-insensitive)
+		nameLower := strings.ToLower(name)
+		if nameLower == "sfp-wizard" || nameLower == "sfp wizard" || strings.Contains(nameLower, "sfp") {
+			fmt.Printf(">>> MATCH! Connecting to: %s\n", name)
 			deviceResult = result
 			found = true
 			adapter.StopScan()
 		}
 	})
 
+	if err != nil {
+		log.Fatal("Scan error:", err)
+	}
+
+	fmt.Println("---")
+	fmt.Printf("Scan complete. Found %d devices total.\n", deviceCount)
+
 	if !found {
-		log.Fatal("SFP Wizard device not found")
+		fmt.Println("\nERROR: SFP Wizard device not found!")
+		fmt.Println("\nTroubleshooting:")
+		fmt.Println("  1. Make sure the device is powered on")
+		fmt.Println("  2. Check that Bluetooth is enabled on the device")
+		fmt.Println("  3. Try power cycling the SFP Wizard")
+		fmt.Println("  4. Make sure no other app is connected to it")
+		fmt.Println("  5. Check if the device name appears in the list above")
+		os.Exit(1)
 	}
 
 	address, _ := deviceResult.Address.MarshalText()
-	fmt.Printf("Found device: %s\n", string(address))
-	fmt.Println("Connecting...")
+	fmt.Printf("\nConnecting to %s...\n", string(address))
 
 	device, err := adapter.Connect(deviceResult.Address, bluetooth.ConnectionParams{})
 	if err != nil {
 		log.Fatal("Failed to connect:", err)
 	}
 
-	fmt.Println("Connected!")
+	fmt.Println("Connected successfully!")
 	return device
 }
 
@@ -248,97 +333,226 @@ func cmdFirmwareUpdate(device bluetooth.Device, firmwareFile string) {
 // ============================================================================
 
 // getSFPCharacteristics discovers and returns the SFP service characteristics
-func getSFPCharacteristics(device bluetooth.Device) (writeChar, notifyChar bluetooth.DeviceCharacteristic, err error) {
-	sfpSvcUUID, err := bluetooth.ParseUUID(SFPServiceUUID)
+func getSFPCharacteristics(device bluetooth.Device) (writeChar, notifyChar, secondaryNotifyChar bluetooth.DeviceCharacteristic, err error) {
+	debugf("Discovering services...")
+
+	// First, discover all services to see what's available
+	allServices, err := device.DiscoverServices(nil)
 	if err != nil {
-		return writeChar, notifyChar, fmt.Errorf("failed to parse SFP service UUID: %v", err)
+		return writeChar, notifyChar, secondaryNotifyChar, fmt.Errorf("failed to discover services: %v", err)
 	}
 
-	sfpSrvs, err := device.DiscoverServices([]bluetooth.UUID{sfpSvcUUID})
-	if err != nil || len(sfpSrvs) == 0 {
-		return writeChar, notifyChar, fmt.Errorf("SFP service not found: %v", err)
+	debugf("Found %d services", len(allServices))
+	for i, svc := range allServices {
+		debugf("  [%d] Service UUID: %s", i+1, svc.UUID().String())
 	}
 
-	sfpWriteUUID, _ := bluetooth.ParseUUID(SFPWriteCharUUID)
-	sfpNotifyUUID, _ := bluetooth.ParseUUID(SFPNotifyCharUUID)
-
-	sfpChars, err := sfpSrvs[0].DiscoverCharacteristics([]bluetooth.UUID{
-		sfpWriteUUID,
-		sfpNotifyUUID,
-	})
-	if err != nil {
-		return writeChar, notifyChar, fmt.Errorf("failed to discover SFP characteristics: %v", err)
-	}
-
-	for _, c := range sfpChars {
-		uuid := c.UUID().String()
-		if uuid == SFPWriteCharUUID {
-			writeChar = c
-		} else if uuid == SFPNotifyCharUUID {
-			notifyChar = c
+	// Try to find the SFP service (case-insensitive comparison)
+	var sfpService *bluetooth.DeviceService
+	for i := range allServices {
+		if strings.EqualFold(allServices[i].UUID().String(), SFPServiceUUID) {
+			sfpService = &allServices[i]
+			debugf("✓ Found SFP service: %s", SFPServiceUUID)
+			break
 		}
 	}
 
-	return writeChar, notifyChar, nil
+	if sfpService == nil {
+		return writeChar, notifyChar, secondaryNotifyChar, fmt.Errorf("SFP service (%s) not found on device", SFPServiceUUID)
+	}
+
+	// Discover characteristics
+	debugf("Discovering characteristics...")
+	sfpChars, err := sfpService.DiscoverCharacteristics(nil)
+	if err != nil {
+		return writeChar, notifyChar, secondaryNotifyChar, fmt.Errorf("failed to discover SFP characteristics: %v", err)
+	}
+
+	debugf("Found %d characteristics", len(sfpChars))
+	for i, char := range sfpChars {
+		debugf("  [%d] Characteristic UUID: %s", i+1, char.UUID().String())
+	}
+
+	// Find our specific characteristics (case-insensitive)
+	for _, c := range sfpChars {
+		uuid := c.UUID().String()
+		if strings.EqualFold(uuid, SFPWriteCharUUID) {
+			writeChar = c
+			debugf("✓ Found Write characteristic")
+		} else if strings.EqualFold(uuid, SFPNotifyCharUUID) {
+			notifyChar = c
+			debugf("✓ Found Primary Notify characteristic")
+		} else if strings.EqualFold(uuid, SFPSecondaryNotifyUUID) {
+			secondaryNotifyChar = c
+			debugf("✓ Found Secondary Notify characteristic")
+		}
+	}
+
+	// Verify all were found
+	var missing []string
+	if writeChar.UUID().String() == "00000000-0000-0000-0000-000000000000" {
+		missing = append(missing, "Write")
+	}
+	if notifyChar.UUID().String() == "00000000-0000-0000-0000-000000000000" {
+		missing = append(missing, "Notify")
+	}
+	if secondaryNotifyChar.UUID().String() == "00000000-0000-0000-0000-000000000000" {
+		missing = append(missing, "Secondary Notify")
+	}
+
+	if len(missing) > 0 {
+		return writeChar, notifyChar, secondaryNotifyChar, fmt.Errorf("missing required characteristics: %v", missing)
+	}
+
+	debugf("✓ All required characteristics found")
+	return writeChar, notifyChar, secondaryNotifyChar, nil
 }
 
 func cmdVersion(device bluetooth.Device) {
-	writeChar, notifyChar, err := getSFPCharacteristics(device)
+	_, notifyChar, secondaryNotifyChar, err := getSFPCharacteristics(device)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	responseChan := make(chan string, 1)
+	responseChan := make(chan string, 10)
 
+	debugf("Enabling primary notifications...")
 	err = notifyChar.EnableNotifications(func(data []byte) {
+		debugf("[PRIMARY] Received %d bytes: %X", len(data), data)
 		if isTextData(data) {
-			responseChan <- string(data)
+			text := string(data)
+			debugf("[PRIMARY TEXT] %s", text)
+			responseChan <- text
+		} else {
+			debugf("[PRIMARY BINARY] Not text data")
 		}
 	})
 	if err != nil {
-		log.Fatal("Failed to enable notifications:", err)
+		log.Fatal("Failed to enable primary notifications:", err)
 	}
+	debugf("✓ Primary notifications enabled")
 
-	sendTextCommand(writeChar, "/api/1.0/version")
+	debugf("Enabling secondary notifications...")
+	err = secondaryNotifyChar.EnableNotifications(func(data []byte) {
+		debugf("[SECONDARY] Received %d bytes: %X", len(data), data)
+		if isTextData(data) {
+			text := string(data)
+			debugf("[SECONDARY TEXT] %s", text)
+			responseChan <- text
+		} else {
+			debugf("[SECONDARY BINARY] Not text data")
+		}
+	})
+	if err != nil {
+		log.Fatal("Failed to enable secondary notifications:", err)
+	}
+	debugf("✓ Secondary notifications enabled")
 
+	// Trigger device response by reading from notify characteristic
+	debugf("Reading from notify characteristic to trigger device response...")
+	buf := make([]byte, 512)
+	_, _ = notifyChar.Read(buf) // Ignore errors, this is just to trigger
+
+	// Give BLE stack time to deliver notification
+	time.Sleep(300 * time.Millisecond)
+
+	// Check if we got a response
 	select {
 	case response := <-responseChan:
-		fmt.Println(response)
+		// Parse JSON response
+		var info DeviceInfo
+		if err := json.Unmarshal([]byte(response), &info); err == nil {
+			// Pretty print the info
+			fmt.Printf("Device ID:       %s\n", info.ID)
+			fmt.Printf("Firmware:        v%s\n", info.FWVersion)
+			fmt.Printf("API Version:     %s\n", info.APIVersion)
+
+			// Parse voltage (in millivolts to volts)
+			if info.Voltage != "" {
+				fmt.Printf("Battery Voltage: %s mV\n", info.Voltage)
+			}
+			if info.Level != "" {
+				fmt.Printf("Battery Level:   %s%%\n", info.Level)
+			}
+		} else {
+			// Fallback to raw output if not JSON
+			fmt.Println(response)
+		}
 	case <-time.After(3 * time.Second):
-		log.Fatal("Timeout waiting for version response")
+		log.Fatal("Timeout waiting for device response")
 	}
 }
 
 func cmdStatus(device bluetooth.Device) {
-	writeChar, notifyChar, err := getSFPCharacteristics(device)
+	writeChar, notifyChar, secondaryNotifyChar, err := getSFPCharacteristics(device)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	responseChan := make(chan string, 1)
+	responseChan := make(chan string, 10)
 
+	debugf("Enabling primary notifications...")
 	err = notifyChar.EnableNotifications(func(data []byte) {
+		debugf("[PRIMARY] Received %d bytes: %X", len(data), data)
 		if isTextData(data) {
-			responseChan <- string(data)
+			text := string(data)
+			debugf("[PRIMARY TEXT] %s", text)
+			responseChan <- text
 		}
 	})
 	if err != nil {
 		log.Fatal("Failed to enable notifications:", err)
 	}
 
+	debugf("Enabling secondary notifications...")
+	err = secondaryNotifyChar.EnableNotifications(func(data []byte) {
+		debugf("[SECONDARY] Received %d bytes: %X", len(data), data)
+		if isTextData(data) {
+			text := string(data)
+			debugf("[SECONDARY TEXT] %s", text)
+			responseChan <- text
+		}
+	})
+	if err != nil {
+		log.Fatal("Failed to enable secondary notifications:", err)
+	}
+
+	// Trigger device response by reading
+	debugf("Reading to trigger device response...")
+	buf := make([]byte, 512)
+	_, _ = notifyChar.Read(buf)
+
+	time.Sleep(300 * time.Millisecond)
+
+	// Try sending status command
+	debugf("Sending status command...")
 	sendTextCommand(writeChar, "[GET] /stats")
 
 	select {
 	case response := <-responseChan:
-		fmt.Println(response)
-		parseAndPrintStatus(response)
+		// The device returns JSON with device info (same as version)
+		var info DeviceInfo
+		if err := json.Unmarshal([]byte(response), &info); err == nil {
+			fmt.Printf("Device ID:       %s\n", info.ID)
+			fmt.Printf("Firmware:        v%s\n", info.FWVersion)
+			fmt.Printf("API Version:     %s\n", info.APIVersion)
+			if info.Voltage != "" {
+				fmt.Printf("Battery Voltage: %s mV\n", info.Voltage)
+			}
+			if info.Level != "" {
+				fmt.Printf("Battery Level:   %s%%\n", info.Level)
+			}
+		} else {
+			// Fallback to raw output if not JSON
+			fmt.Println(response)
+		}
 	case <-time.After(3 * time.Second):
 		log.Fatal("Timeout waiting for status response")
 	}
 }
 
 func cmdReadEEPROM(device bluetooth.Device) {
-	writeChar, notifyChar, err := getSFPCharacteristics(device)
+	writeChar, notifyChar, secondaryNotifyChar, err := getSFPCharacteristics(device)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -347,14 +561,25 @@ func cmdReadEEPROM(device bluetooth.Device) {
 	ackReceived := false
 	dataChan := make(chan bool, 1)
 
+	debugf("Enabling primary notifications...")
 	err = notifyChar.EnableNotifications(func(data []byte) {
 		if isTextData(data) {
 			msg := string(data)
+			debugf("[PRIMARY TEXT] %s", msg)
+
+			// Skip initial device info JSON
+			if strings.Contains(msg, `"id"`) && strings.Contains(msg, `"fwv"`) {
+				debugf("Skipping device info JSON")
+				return
+			}
+
 			fmt.Println("Device:", msg)
-			if strings.Contains(msg, "SIF start") {
+			if strings.Contains(strings.ToLower(msg), "sif") && strings.Contains(strings.ToLower(msg), "start") {
 				ackReceived = true
+				debugf("Acknowledgment received!")
 			}
 		} else {
+			debugf("[PRIMARY BINARY] Received %d bytes", len(data))
 			// Binary EEPROM data
 			if ackReceived {
 				eepromData = append(eepromData, data...)
@@ -364,12 +589,55 @@ func cmdReadEEPROM(device bluetooth.Device) {
 				case dataChan <- true:
 				default:
 				}
+			} else {
+				debugf("Ignoring binary data - no ack yet")
 			}
 		}
 	})
 	if err != nil {
-		log.Fatal("Failed to enable notifications:", err)
+		log.Fatal("Failed to enable primary notifications:", err)
 	}
+
+	debugf("Enabling secondary notifications...")
+	err = secondaryNotifyChar.EnableNotifications(func(data []byte) {
+		if isTextData(data) {
+			msg := string(data)
+			debugf("[SECONDARY TEXT] %s", msg)
+
+			// Skip initial device info JSON
+			if strings.Contains(msg, `"id"`) && strings.Contains(msg, `"fwv"`) {
+				debugf("Skipping device info JSON")
+				return
+			}
+
+			if strings.Contains(strings.ToLower(msg), "sif") && strings.Contains(strings.ToLower(msg), "start") {
+				ackReceived = true
+				debugf("Acknowledgment received!")
+			}
+		} else {
+			debugf("[SECONDARY BINARY] Received %d bytes", len(data))
+			if ackReceived {
+				eepromData = append(eepromData, data...)
+				fmt.Printf("Received %d bytes (total: %d bytes)\n", len(data), len(eepromData))
+				select {
+				case dataChan <- true:
+				default:
+				}
+			} else {
+				debugf("Ignoring binary data - no ack yet")
+			}
+		}
+	})
+	if err != nil {
+		log.Fatal("Failed to enable secondary notifications:", err)
+	}
+
+	// Trigger device by reading
+	debugf("Reading to trigger device...")
+	buf := make([]byte, 512)
+	_, _ = notifyChar.Read(buf)
+
+	time.Sleep(300 * time.Millisecond)
 
 	fmt.Println("Starting EEPROM read...")
 	sendTextCommand(writeChar, "[POST] /sif/start")
@@ -406,22 +674,42 @@ func cmdWriteEEPROM(device bluetooth.Device, filename string) {
 
 	fmt.Printf("Loaded %d bytes from %s\n", len(data), filename)
 
-	writeChar, notifyChar, err := getSFPCharacteristics(device)
+	writeChar, notifyChar, secondaryNotifyChar, err := getSFPCharacteristics(device)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	statusChan := make(chan string, 10)
 
+	debugf("Enabling primary notifications...")
 	err = notifyChar.EnableNotifications(func(data []byte) {
 		if isTextData(data) {
 			msg := string(data)
+			debugf("[PRIMARY TEXT] %s", msg)
 			statusChan <- msg
 		}
 	})
 	if err != nil {
-		log.Fatal("Failed to enable notifications:", err)
+		log.Fatal("Failed to enable primary notifications:", err)
 	}
+
+	debugf("Enabling secondary notifications...")
+	err = secondaryNotifyChar.EnableNotifications(func(data []byte) {
+		if isTextData(data) {
+			msg := string(data)
+			debugf("[SECONDARY TEXT] %s", msg)
+			statusChan <- msg
+		}
+	})
+	if err != nil {
+		log.Fatal("Failed to enable secondary notifications:", err)
+	}
+
+	// Trigger device
+	debugf("Reading to trigger device...")
+	buf := make([]byte, 512)
+	_, _ = notifyChar.Read(buf)
+	time.Sleep(300 * time.Millisecond)
 
 	fmt.Println("Initiating write mode...")
 	sendTextCommand(writeChar, "[POST] /sif/write")
@@ -476,21 +764,42 @@ func cmdWriteEEPROM(device bluetooth.Device, filename string) {
 }
 
 func cmdEraseEEPROM(device bluetooth.Device) {
-	writeChar, notifyChar, err := getSFPCharacteristics(device)
+	writeChar, notifyChar, secondaryNotifyChar, err := getSFPCharacteristics(device)
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	statusChan := make(chan string, 10)
 
+	debugf("Enabling primary notifications...")
 	err = notifyChar.EnableNotifications(func(data []byte) {
 		if isTextData(data) {
-			statusChan <- string(data)
+			msg := string(data)
+			debugf("[PRIMARY TEXT] %s", msg)
+			statusChan <- msg
 		}
 	})
 	if err != nil {
-		log.Fatal("Failed to enable notifications:", err)
+		log.Fatal("Failed to enable primary notifications:", err)
 	}
+
+	debugf("Enabling secondary notifications...")
+	err = secondaryNotifyChar.EnableNotifications(func(data []byte) {
+		if isTextData(data) {
+			msg := string(data)
+			debugf("[SECONDARY TEXT] %s", msg)
+			statusChan <- msg
+		}
+	})
+	if err != nil {
+		log.Fatal("Failed to enable secondary notifications:", err)
+	}
+
+	// Trigger device
+	debugf("Reading to trigger device...")
+	buf := make([]byte, 512)
+	_, _ = notifyChar.Read(buf)
+	time.Sleep(300 * time.Millisecond)
 
 	fmt.Println("WARNING: This will erase the SFP module EEPROM!")
 	fmt.Println("Starting erase...")
@@ -516,21 +825,42 @@ func cmdEraseEEPROM(device bluetooth.Device) {
 }
 
 func cmdStop(device bluetooth.Device) {
-	writeChar, notifyChar, err := getSFPCharacteristics(device)
+	writeChar, notifyChar, secondaryNotifyChar, err := getSFPCharacteristics(device)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	responseChan := make(chan string, 1)
+	responseChan := make(chan string, 10)
 
+	debugf("Enabling primary notifications...")
 	err = notifyChar.EnableNotifications(func(data []byte) {
 		if isTextData(data) {
-			responseChan <- string(data)
+			msg := string(data)
+			debugf("[PRIMARY TEXT] %s", msg)
+			responseChan <- msg
 		}
 	})
 	if err != nil {
-		log.Fatal("Failed to enable notifications:", err)
+		log.Fatal("Failed to enable primary notifications:", err)
 	}
+
+	debugf("Enabling secondary notifications...")
+	err = secondaryNotifyChar.EnableNotifications(func(data []byte) {
+		if isTextData(data) {
+			msg := string(data)
+			debugf("[SECONDARY TEXT] %s", msg)
+			responseChan <- msg
+		}
+	})
+	if err != nil {
+		log.Fatal("Failed to enable secondary notifications:", err)
+	}
+
+	// Trigger device
+	debugf("Reading to trigger device...")
+	buf := make([]byte, 512)
+	_, _ = notifyChar.Read(buf)
+	time.Sleep(300 * time.Millisecond)
 
 	sendTextCommand(writeChar, "[POST] /sif/stop")
 
@@ -557,6 +887,116 @@ func isTextData(data []byte) bool {
 		}
 	}
 	return true
+}
+
+func cmdTestAPI(device bluetooth.Device) {
+	writeChar, notifyChar, secondaryNotifyChar, err := getSFPCharacteristics(device)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	responseChan := make(chan string, 10)
+	allResponses := []string{}
+
+	debugf("Enabling notifications...")
+	notifyChar.EnableNotifications(func(data []byte) {
+		if isTextData(data) {
+			text := string(data)
+			responseChan <- text
+		}
+	})
+	secondaryNotifyChar.EnableNotifications(func(data []byte) {
+		if isTextData(data) {
+			text := string(data)
+			responseChan <- text
+		}
+	})
+
+	// Trigger device and wait for initial JSON
+	buf := make([]byte, 512)
+	notifyChar.Read(buf)
+
+	// Wait for and drain the initial device info JSON
+	fmt.Println("Waiting for initial device info...")
+	select {
+	case response := <-responseChan:
+		fmt.Printf("Got initial response: %s\n", response[:min(50, len(response))])
+	case <-time.After(1 * time.Second):
+		fmt.Println("No initial response")
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Try various API endpoints (test both with and without initial read)
+	testCommands := []string{
+		"/api/1.0/version",
+		"[GET] /stats",
+		"[GET] /api/1.0/sfp/status",
+		"[POST] /api/1.0/sfp/read",
+		"[GET] /sfp/status",
+		"[POST] /sfp/read",
+		"[POST] /sif/start",
+		"/api/1.0/sif/start",
+		"[GET] /api/1.0/sfp",
+		"[POST] /api/1.0/sfp/eeprom/read",
+		"READ",
+		"STATUS",
+	}
+
+	fmt.Println("Testing API endpoints...")
+	fmt.Println("========================")
+
+	for _, cmd := range testCommands {
+		fmt.Printf("\nTesting: %s\n", cmd)
+		sendTextCommand(writeChar, cmd)
+
+		select {
+		case response := <-responseChan:
+			if !strings.Contains(response, `"id"`) || !strings.Contains(response, `"fwv"`) {
+				fmt.Printf("  ✓ Response: %s\n", response)
+				allResponses = append(allResponses, fmt.Sprintf("%s -> %s", cmd, response))
+			} else {
+				fmt.Println("  • Device info (same as version)")
+			}
+		case <-time.After(1 * time.Second):
+			fmt.Println("  ✗ No response")
+		}
+	}
+
+	if len(allResponses) > 0 {
+		fmt.Println("\n\nSuccessful Commands:")
+		fmt.Println("====================")
+		for _, r := range allResponses {
+			fmt.Println(r)
+		}
+	}
+}
+
+func cmdExplore(device bluetooth.Device) {
+	fmt.Println("Exploring all services and characteristics...")
+
+	allServices, err := device.DiscoverServices(nil)
+	if err != nil {
+		log.Fatal("Failed to discover services:", err)
+	}
+
+	fmt.Printf("\nFound %d services:\n\n", len(allServices))
+
+	for i, svc := range allServices {
+		fmt.Printf("Service #%d: %s\n", i+1, svc.UUID().String())
+
+		chars, err := svc.DiscoverCharacteristics(nil)
+		if err != nil {
+			fmt.Printf("  Error discovering characteristics: %v\n\n", err)
+			continue
+		}
+
+		fmt.Printf("  Characteristics (%d):\n", len(chars))
+		for j, char := range chars {
+			fmt.Printf("    [%d] %s\n", j+1, char.UUID().String())
+		}
+		fmt.Println()
+	}
 }
 
 func parseAndPrintStatus(status string) {
