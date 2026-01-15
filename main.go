@@ -172,6 +172,11 @@ func main() {
 		device := connectToDevice()
 		defer device.Disconnect()
 		cmdSupportDump(device)
+	case "logs":
+		// Show device syslog
+		device := connectToDevice()
+		defer device.Disconnect()
+		cmdLogs(device)
 	case "reboot":
 		// Reboot the device
 		device := connectToDevice()
@@ -271,6 +276,7 @@ func printUsage() {
 	fmt.Println("                      (use device screen to apply to module)")
 	fmt.Println()
 	fmt.Println("Other:")
+	fmt.Println("  logs              Show device syslog")
 	fmt.Println("  support-dump      Download support info archive (syslog, module DB)")
 	fmt.Println("  reboot            Reboot the device")
 	fmt.Println("  explore           List all BLE services and characteristics")
@@ -1580,6 +1586,104 @@ func cmdSupportDump(device bluetooth.Device) {
 		log.Fatal("Failed to save file:", err)
 	}
 	fmt.Printf("\nSaved to: %s\n", filename)
+}
+
+// cmdLogs downloads the support archive and outputs the syslog to stdout
+func cmdLogs(device bluetooth.Device) {
+	ctx := setupAPI(device)
+
+	// Check current SIF status and abort if in progress
+	resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/sif/info/"), nil, 10*time.Second)
+	if err != nil {
+		log.Fatal("Failed to get SIF status:", err)
+	}
+
+	var statusResp struct {
+		Status string `json:"status"`
+		Offset int    `json:"offset"`
+	}
+	if resp.StatusCode == 200 {
+		if err := json.Unmarshal(body, &statusResp); err == nil {
+			if statusResp.Status == "inprogress" || statusResp.Status == "ready" || statusResp.Status == "continue" {
+				resp, _, err := ctx.sendRequest("POST", ctx.apiPath("/sif/abort"), nil, 10*time.Second)
+				if err != nil {
+					log.Fatal("Failed to abort SIF:", err)
+				}
+				if resp.StatusCode != 200 {
+					log.Fatalf("Failed to abort SIF: status %d", resp.StatusCode)
+				}
+				time.Sleep(500 * time.Millisecond)
+			}
+		}
+	}
+
+	// Start SIF read
+	resp, body, err = ctx.sendRequest("POST", ctx.apiPath("/sif/start"), nil, 10*time.Second)
+	if err != nil {
+		log.Fatal("Failed to start SIF read:", err)
+	}
+
+	if resp.StatusCode != 200 {
+		log.Fatalf("Error starting SIF: status %d", resp.StatusCode)
+	}
+
+	var startResp struct {
+		Status string `json:"status"`
+		Offset int    `json:"offset"`
+		Chunk  int    `json:"chunk"`
+		Size   int    `json:"size"`
+	}
+	if err := json.Unmarshal(body, &startResp); err != nil {
+		log.Fatal("Failed to parse start response:", err)
+	}
+
+	// Read all data
+	archiveData := make([]byte, 0, startResp.Size)
+	offset := 0
+	chunkSize := startResp.Chunk
+
+	for offset < startResp.Size {
+		remaining := startResp.Size - offset
+		if remaining < chunkSize {
+			chunkSize = remaining
+		}
+
+		reqBody := fmt.Sprintf(`{"status":"continue","offset":%d,"chunk":%d}`, offset, chunkSize)
+		resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/sif/data/"), []byte(reqBody), 30*time.Second)
+		if err != nil {
+			log.Fatal("Failed to read SIF data:", err)
+		}
+
+		if resp.StatusCode != 200 || len(body) == 0 {
+			break
+		}
+
+		archiveData = append(archiveData, body...)
+		offset += len(body)
+	}
+
+	// Extract syslog from tar archive
+	tr := tar.NewReader(bytes.NewReader(archiveData))
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatal("Error reading tar:", err)
+		}
+
+		if hdr.Name == "syslog" {
+			syslogData, err := io.ReadAll(tr)
+			if err != nil {
+				log.Fatal("Error reading syslog:", err)
+			}
+			fmt.Print(string(syslogData))
+			return
+		}
+	}
+
+	fmt.Println("No syslog found in archive")
 }
 
 // binmeEncodeRawBody wraps JSON header with a raw binary body (format=0x03).
