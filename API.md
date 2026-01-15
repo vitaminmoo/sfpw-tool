@@ -453,6 +453,78 @@ To read current module EEPROM:
 | 0x19d (413) | Data size mismatch |
 | 0x1a1 (417) | Unexpected snapshot size |
 
+#### POST `/api/1.0/{mac}/xsfp/recover`
+
+Restores a module's EEPROM from a previously saved "golden snapshot" in the device database.
+
+**Request body:**
+```json
+{
+  "sn": "SERIALNUMBER",
+  "wavelength": 1310
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `sn` | string | Yes | Serial number of the module to recover |
+| `wavelength` | number | No | Override wavelength value in restored snapshot |
+
+**Response:**
+- **200**: Success - snapshot restored, fires `xsfp_load_completed` event internally
+- **404**: Golden snapshot not found for the given serial number
+
+**Error message (404):**
+```
+Golden snapshot appears to be invalid or not found for sn:'SERIALNUMBER'
+```
+
+**Notes:**
+- Looks up the golden snapshot by serial number in the device's persistent database
+- Validates snapshot size (512 for SFP, 640 for QSFP)
+- If `wavelength` is provided, overrides the wavelength field in the restored data
+
+---
+
+## Module Database
+
+The device maintains a persistent database of module snapshots on its internal flash storage.
+
+### Storage Implementation
+
+- **Filesystem:** LittleFS (Little File System) on ESP32-S3 flash
+- **Location:** Dedicated flash partition
+- **Format:** Individual binary files per module
+
+### Database Structure
+
+| Aspect | Details |
+|--------|---------|
+| **Key** | Module serial number |
+| **Filename** | Part number suffix (e.g., `SFP-10G-SR.bin`) |
+| **File size** | 512 bytes (SFP) or 640 bytes (QSFP) |
+| **Slots per module** | 2 (one for screen read, one for API read) |
+
+### Storage Limits
+
+- **No hardcoded limit** on number of modules
+- Limited only by flash partition size
+- Each module entry uses 512-640 bytes plus filesystem overhead
+- Typical flash partitions can store hundreds of module snapshots
+
+### Database Operations
+
+| Operation | Method |
+|-----------|--------|
+| **Save** | Automatic when module is read (via screen or API) |
+| **Retrieve** | Via `/xsfp/recover` endpoint with serial number |
+| **List** | Via SIF archive - database files included in tar |
+| **Clear** | Device reboot clears runtime cache; flash persists |
+
+### File Naming
+
+Multiple modules can share the same filename if they have identical part numbers. The database internally keys by serial number, so modules with the same part number but different serial numbers are stored separately despite having the same filename in the SIF archive export.
+
 ---
 
 ## Example Request Packet
