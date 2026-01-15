@@ -143,6 +143,26 @@ func main() {
 			os.Exit(1)
 		}
 		cmdParseEEPROM(args[commandIdx+1])
+	case "fw-update":
+		// Update device firmware from file
+		if commandIdx+1 >= len(args) {
+			fmt.Println("Usage: sfpl-flasher fw-update <firmware.bin>")
+			fmt.Println("  Upload and install firmware update from file")
+			os.Exit(1)
+		}
+		device := connectToDevice()
+		defer device.Disconnect()
+		cmdFirmwareUpdate(device, args[commandIdx+1])
+	case "fw-abort":
+		// Abort an in-progress firmware update
+		device := connectToDevice()
+		defer device.Disconnect()
+		cmdFirmwareAbort(device)
+	case "fw-status":
+		// Get detailed firmware status
+		device := connectToDevice()
+		defer device.Disconnect()
+		cmdFirmwareStatus(device)
 	case "test-encode":
 		// Test encoding without connecting - for debugging protocol
 		cmdTestEncode()
@@ -186,6 +206,11 @@ func printUsage() {
 	fmt.Println("  snapshot-read FILE  Read snapshot buffer to file")
 	fmt.Println("  snapshot-write FILE Write EEPROM file to snapshot buffer")
 	fmt.Println("                      (use device screen to apply to module)")
+	fmt.Println()
+	fmt.Println("Firmware operations:")
+	fmt.Println("  fw-update FILE    Upload and install firmware from file")
+	fmt.Println("  fw-status         Get detailed firmware update status")
+	fmt.Println("  fw-abort          Abort an in-progress firmware update")
 	fmt.Println()
 	fmt.Println("Other:")
 	fmt.Println("  logs              Show device syslog")
