@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("sfpl-flasher", flag.ContinueOnError)
+	fs := flag.NewFlagSet("sfpw-tool", flag.ContinueOnError)
 	fs.BoolVar(&verbose, "verbose", false, "Enable verbose debug output")
 	fs.BoolVar(&verbose, "v", false, "Enable verbose debug output (shorthand)")
 
@@ -102,7 +102,7 @@ func main() {
 	case "module-read":
 		// Read EEPROM from physical module
 		if commandIdx+1 >= len(args) {
-			fmt.Println("Usage: sfpl-flasher module-read <output.bin>")
+			fmt.Println("Usage: sfpw-tool module-read <output.bin>")
 			fmt.Println("  Reads the physical SFP module EEPROM and saves to file")
 			os.Exit(1)
 		}
@@ -117,7 +117,7 @@ func main() {
 	case "snapshot-read":
 		// Read snapshot buffer data
 		if commandIdx+1 >= len(args) {
-			fmt.Println("Usage: sfpl-flasher snapshot-read <output.bin>")
+			fmt.Println("Usage: sfpw-tool snapshot-read <output.bin>")
 			fmt.Println("  Reads the snapshot buffer and saves to file")
 			os.Exit(1)
 		}
@@ -127,7 +127,7 @@ func main() {
 	case "snapshot-write":
 		// Write EEPROM data to snapshot buffer
 		if commandIdx+1 >= len(args) {
-			fmt.Println("Usage: sfpl-flasher snapshot-write <eeprom.bin>")
+			fmt.Println("Usage: sfpw-tool snapshot-write <eeprom.bin>")
 			fmt.Println("  Writes a 512-byte (SFP) or 640-byte (QSFP) EEPROM dump to the snapshot")
 			fmt.Println("  Use the device screen to apply snapshot to physical module")
 			os.Exit(1)
@@ -138,7 +138,7 @@ func main() {
 	case "parse-eeprom":
 		// Parse and display SFP EEPROM data from a file (no device connection)
 		if commandIdx+1 >= len(args) {
-			fmt.Println("Usage: sfpl-flasher parse-eeprom <eeprom.bin>")
+			fmt.Println("Usage: sfpw-tool parse-eeprom <eeprom.bin>")
 			fmt.Println("  Parses a 512-byte (SFP) or 640-byte (QSFP) EEPROM dump and displays info")
 			os.Exit(1)
 		}
@@ -146,7 +146,7 @@ func main() {
 	case "fw-update":
 		// Update device firmware from file
 		if commandIdx+1 >= len(args) {
-			fmt.Println("Usage: sfpl-flasher fw-update <firmware.bin>")
+			fmt.Println("Usage: sfpw-tool fw-update <firmware.bin>")
 			fmt.Println("  Upload and install firmware update from file")
 			os.Exit(1)
 		}
@@ -169,7 +169,7 @@ func main() {
 	case "test-packets":
 		// Test decoding packets from packets.csv
 		if commandIdx+1 >= len(args) {
-			fmt.Println("Usage: sfpl-flasher test-packets <file.csv>")
+			fmt.Println("Usage: sfpw-tool test-packets <file.csv>")
 			os.Exit(1)
 		}
 		cmdTestPackets(args[commandIdx+1])
@@ -183,7 +183,7 @@ func main() {
 func printUsage() {
 	fmt.Println("SFP Wizard Flasher - BLE Command Tool")
 	fmt.Println()
-	fmt.Println("Usage: sfpl-flasher [flags] <command>")
+	fmt.Println("Usage: sfpw-tool [flags] <command>")
 	fmt.Println()
 	fmt.Println("Flags:")
 	fmt.Println("  -v, --verbose    Enable verbose debug output")
@@ -222,6 +222,6 @@ func printUsage() {
 	fmt.Println("  parse-eeprom FILE Parse and display SFP/QSFP EEPROM data from file")
 	fmt.Println()
 	fmt.Println("Examples:")
-	fmt.Println("  sfpl-flasher version")
-	fmt.Println("  sfpl-flasher -v api-version")
+	fmt.Println("  sfpw-tool version")
+	fmt.Println("  sfpw-tool -v api-version")
 }

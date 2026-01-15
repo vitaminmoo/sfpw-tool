@@ -385,7 +385,6 @@ func sendLargeAPIRequest(writeChar, notifyChar *bluetooth.DeviceCharacteristic, 
 	var expectedLen int
 	responseChan := make(chan bool, 1)
 	var mu sync.Mutex
-	var decodeErr error
 
 	debugf("Enabling notifications for large response...")
 	err := notifyChar.EnableNotifications(func(buf []byte) {
@@ -450,10 +449,6 @@ func sendLargeAPIRequest(writeChar, notifyChar *bluetooth.DeviceCharacteristic, 
 		mu.Lock()
 		data := responseBuf.Bytes()
 		mu.Unlock()
-
-		if decodeErr != nil {
-			return nil, nil, decodeErr
-		}
 
 		headerJSON, bodyData, err := binmeDecode(data)
 		if err != nil {
