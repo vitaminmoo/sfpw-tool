@@ -1,11 +1,8 @@
-module sfpl-flasher
+module sfpw-cli
 
 go 1.24.4
 
-require (
-	google.golang.org/protobuf v1.36.11
-	tinygo.org/x/bluetooth v0.14.0
-)
+require tinygo.org/x/bluetooth v0.14.0
 
 require (
 	github.com/go-ole/go-ole v1.2.6 // indirect

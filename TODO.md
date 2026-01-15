@@ -9,107 +9,160 @@ Go CLI tool for interacting with the SFP Wizard (Ubiquiti) hardware device over 
 
 ---
 
-## ✅ Confirmed Working
+## Confirmed Working
 
 ### Core BLE Functionality
 - [x] BLE adapter initialization and device scanning
 - [x] Device discovery (case-insensitive name matching)
 - [x] Connection handling with service discovery
-- [x] Reading device info from notify characteristic (returns JSON)
+- [x] Reading device info from BLE characteristic
 
-### What We Know Works
-- **Reading dc272a22... characteristic** returns device JSON:
-  ```json
-  {"id":"1C6A1B7FBE88","fwv":"1.1.1","apiVersion":"1.0","voltage":"4158","level":"100"}
-  ```
+### API Protocol (Binary Envelope + JSON)
+- [x] Binary envelope encoding with zlib compression
+- [x] Binary envelope decoding (handles uncompressed responses)
+- [x] Handle multiple zlib compression levels (78 01, 78 9c, etc.)
+- [x] Request/response correlation via incrementing hex IDs
+- [x] Sequence number in outer header matches request ID
 
----
-
-## ❌ Critical Issue Discovered
-
-### Device Enters Bad State After Our Connection
-
-**Problem:** After connecting with our tool (Go or Python), the SFP Wizard stops responding to the official Ubiquiti mobile app until the device is rebooted.
-
-**Implications:**
-- Our connection method is corrupting device state
-- All previous testing was likely invalid (device was in bad state)
-- Need to understand what the official app does differently
-
-### Possible Causes
-1. **Subscription method** - Maybe we're subscribing incorrectly
-2. **Write method** - Maybe we're writing to wrong characteristic or wrong format
-3. **Connection parameters** - MTU, connection interval, etc.
-4. **Missing initialization** - Some handshake or auth we're not doing
-5. **Characteristic handles** - Duplicate UUIDs across services causing confusion
+### API Commands
+- [x] `version` - Read device info from BLE characteristic
+- [x] `explore` - List all BLE services and characteristics
+- [x] `api-version` - GET /api/version
+- [x] `stats` - GET /api/1.0/{mac}/stats (battery, signal, uptime)
+- [x] `info` - GET /api/1.0/{mac} (device type, name, firmware)
+- [x] `settings` - GET /api/1.0/{mac}/settings
+- [x] `bt` - GET /api/1.0/{mac}/bt (bluetooth parameters)
+- [x] `fw` - GET /api/1.0/{mac}/fw (firmware status)
+- [x] `sif-read` - Read SFP EEPROM data (vendor, serial, wavelength, etc.)
+- [x] `reboot` - Reboot the device
 
 ---
 
-## 🔍 BLE Service/Characteristic Map
+## BLE Service/Characteristic Map
 
 ```
-Service #3: 8e60f02e-f699-4865-b83f-f40501752184 (SFP Service)
-  Handle 15: 9280f26c-a56f-43ea-b769-d5d732e1ac67 [write-without-response, write]
-  Handle 17: dc272a22-43f2-416b-8fa5-63a071542fac [notify, read, write-without-response, write]
-  Handle 20: d587c47f-ac6e-4388-a31c-e6cd380ba043 [notify, read]
-
-Service #4: 0b9676ee-8352-440a-bf80-61541d578fcf (Unknown - v1.1.1?)
-  Handle 24: 9280f26c-a56f-43ea-b769-d5d732e1ac67 [write] (SAME UUID as Service #3!)
-  Handle 26: d587c47f-ac6e-4388-a31c-e6cd380ba043 [notify, read] (SAME UUID as Service #3!)
+Service: 8e60f02e-f699-4865-b83f-f40501752184 (SFP API Service)
+  Handle 0x10: 9280f26c-a56f-43ea-b769-d5d732e1ac67 [write] - Write API requests
+  Handle 0x11: dc272a22-43f2-416b-8fa5-63a071542fac [notify, read] - Device info JSON
+  Handle 0x15: d587c47f-ac6e-4388-a31c-e6cd380ba043 [notify, read] - API responses
 ```
 
-**Note:** Duplicate UUIDs across services is unusual and may be significant.
+**Key Discovery:** API responses come on `d587c47f` (handle 0x15), NOT `dc272a22`!
 
 ---
 
-## 📋 Next Steps
+## Next Steps
 
-### Reverse Engineering Required
-1. [ ] **Reverse engineer official Ubiquiti app**
-   - Capture BLE traffic with Wireshark/nRF Sniffer
-   - Decompile APK and analyze BLE code
-   - Document exact connection sequence
-   - Document command format and responses
+### SIF (Support Info File) Operations
+- [x] Implement POST /api/1.0/{mac}/sif/start - Start SIF read
+- [x] Implement GET /api/1.0/{mac}/sif/info/ - Check SIF status
+- [x] Implement GET /api/1.0/{mac}/sif/data/ - Read SIF data chunks
+- [x] Implement POST /api/1.0/{mac}/sif/abort - Abort SIF operation (used in sif-read)
+- [x] Handle fragmented BLE responses for large data transfers
+- [x] Parse tar archive output (contains EEPROM bins, syslog, module database)
+- [x] Parse and display SFP EEPROM data (vendor, model, wavelength, etc.)
 
-2. [ ] **Reverse engineer device firmware**
-   - Analyze firmware binary
-   - Understand BLE message handling
-   - Find what causes "bad state"
+### SIF Write Operations
+- [ ] Implement SIF write start
+- [ ] Implement SIF write data
+- [ ] Test writing custom EEPROM values
 
-3. [ ] **Compare connection sequences**
-   - What does official app do that we don't?
-   - MTU negotiation?
-   - Connection parameters?
-   - Specific characteristic order?
-
-### After RE Complete
-4. [ ] Implement correct connection sequence
-5. [ ] Implement working command protocol
-6. [ ] Test EEPROM read
-7. [ ] Test EEPROM write
+### Other Features
+- [ ] POST /api/1.0/{mac}/name - Set device name
+- [x] POST /api/1.0/{mac}/reboot - Reboot device
+- [ ] Firmware update operations (low priority)
 
 ---
 
-## 📚 References
+## Known Limitations
 
-- **Third-party v1.0.10 code** - Uses simple text commands but for older firmware
-- **Device logs** - Show command format but from internal perspective
-- **BLE Spec v1.0.10** - Outdated, device is v1.1.1
+- **tinygo bluetooth on Linux** doesn't support Write with Response (only WriteWithoutResponse)
+  - See: https://github.com/tinygo-org/bluetooth/issues/153
+  - Fortunately, WriteWithoutResponse works for the SFP Wizard API
 
 ---
 
-## 💡 Hints from Device Logs
+## Discoveries
 
-Commands seen in device logs (may include internal formatting):
-```
-/api/1.0/version
-[GET] /stats[0]
-[POST] /sif/start[0]
-[GET] /sif/data[45]{"status":"continue","offset":0,"chunk":4096}
-[GET] /sif/info[0]
+### SIF Archive Structure
+The SIF read returns a **tar archive** containing:
+- `syslog` - Device logs (RAM, clears on reboot)
+- `sfp_primary.bin` - Module read via device screen
+- `sfp_secondary.bin` - Module read via API
+- `qsfp_primary/secondary.bin` - QSFP slots (0xff if empty)
+- `{PartNumber}.bin` - Flash database, keyed by S/N, 2 slots per unique module
+
+### Compression
+- Responses may have compression flag=0x01 but send raw data
+- Check for zlib magic byte 0x78 before decompressing
+- Different compression levels: 78 01 (none), 78 5e (fast), 78 9c (default), 78 da (best)
+
+---
+
+## Sample API Responses
+
+### GET /api/1.0/{mac}
+```json
+{
+  "id": "DEADBEEFCAFE",
+  "type": "USFPW",
+  "fwv": "1.1.1",
+  "bomId": "10652-8",
+  "proId": "9487-1",
+  "state": "app",
+  "name": "Sfp Wizard"
+}
 ```
 
-**Note:** The `[0]` and `[N]` suffixes may be internal logging, not part of actual commands.
+### GET /api/1.0/{mac}/stats
+```json
+{
+  "battery": 71,
+  "batteryV": 3.888,
+  "isLowBattery": false,
+  "uptime": 607849,
+  "signalDbm": -55
+}
+```
+
+### GET /api/1.0/{mac}/settings
+```json
+{
+  "ch": "release",
+  "name": "uacc-sfp-wizard",
+  "isLedEnabled": true,
+  "isHwResetBlocked": false,
+  "uwsType": "us",
+  "intervals": {
+    "intStats": 1000
+  },
+  "homekitEnabled": false
+}
+```
+
+### GET /api/1.0/{mac}/bt
+```json
+{
+  "btMode": "CUSTOM",
+  "intervalMin": 0,
+  "intervalMax": 0,
+  "timeout": 0,
+  "latency": 0,
+  "enableLatency": false
+}
+```
+
+### GET /api/1.0/{mac}/fw
+```json
+{
+  "hwv": 8,
+  "fwv": "1.1.1",
+  "isUPdating": false,
+  "status": "finished",
+  "progressPercent": 0,
+  "remainingTime": 0
+}
+```
 
 ---
 
