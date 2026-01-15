@@ -1,4 +1,4 @@
-package main
+package ble
 
 import (
 	"encoding/json"
@@ -7,21 +7,14 @@ import (
 	"os"
 	"strings"
 
+	"sfpw-tool/internal/config"
+	"sfpw-tool/internal/protocol"
+
 	"tinygo.org/x/bluetooth"
 )
 
-const (
-	// SFP Service (from BLE spec) - original service
-	SFPServiceUUID         = "8E60F02E-F699-4865-B83F-F40501752184"
-	SFPWriteCharUUID       = "9280F26C-A56F-43EA-B769-D5D732E1AC67"
-	SFPNotifyCharUUID      = "DC272A22-43F2-416B-8FA5-63A071542FAC"
-	SFPSecondaryNotifyUUID = "D587C47F-AC6E-4388-A31C-E6CD380BA043"
-
-	// Secondary service (v1.1.1) - has duplicate characteristic UUIDs
-	SFPService2UUID = "0B9676EE-8352-440A-BF80-61541D578FCF"
-)
-
-func connectToDevice() bluetooth.Device {
+// Connect scans for and connects to the SFP Wizard device
+func Connect() bluetooth.Device {
 	adapter := bluetooth.DefaultAdapter
 	err := adapter.Enable()
 	if err != nil {
@@ -37,7 +30,7 @@ func connectToDevice() bluetooth.Device {
 		name := result.LocalName()
 		nameLower := strings.ToLower(name)
 
-		if verbose && name != "" {
+		if config.Verbose && name != "" {
 			address, _ := result.Address.MarshalText()
 			fmt.Printf("  Found: '%s' (%s)\n", name, string(address))
 		}
@@ -70,9 +63,9 @@ func connectToDevice() bluetooth.Device {
 	return device
 }
 
-// setupAPI discovers services/characteristics and gets device MAC for API calls
-func setupAPI(device bluetooth.Device) *APIContext {
-	debugf("Discovering services...")
+// SetupAPI discovers services/characteristics and gets device MAC for API calls
+func SetupAPI(device bluetooth.Device) *APIContext {
+	config.Debugf("Discovering services...")
 
 	allServices, err := device.DiscoverServices(nil)
 	if err != nil {
@@ -85,7 +78,7 @@ func setupAPI(device bluetooth.Device) *APIContext {
 		uuidStr := allServices[i].UUID().String()
 		if strings.EqualFold(uuidStr, SFPServiceUUID) {
 			sfpService = &allServices[i]
-			debugf("Found SFP service: %s", uuidStr)
+			config.Debugf("Found SFP service: %s", uuidStr)
 			break
 		}
 	}
@@ -108,7 +101,7 @@ func setupAPI(device bluetooth.Device) *APIContext {
 	var infoChar *bluetooth.DeviceCharacteristic
 	for i := range chars {
 		uuidStr := chars[i].UUID().String()
-		debugf("Found characteristic: %s", uuidStr)
+		config.Debugf("Found characteristic: %s", uuidStr)
 		if strings.EqualFold(uuidStr, SFPWriteCharUUID) {
 			ctx.WriteChar = &chars[i]
 		}
@@ -132,10 +125,10 @@ func setupAPI(device bluetooth.Device) *APIContext {
 		buf := make([]byte, 256)
 		n, err := infoChar.Read(buf)
 		if err == nil && n > 0 {
-			var info DeviceInfo
+			var info protocol.DeviceInfo
 			if err := json.Unmarshal(buf[:n], &info); err == nil {
 				ctx.MAC = strings.ToLower(info.ID)
-				debugf("Device MAC: %s", ctx.MAC)
+				config.Debugf("Device MAC: %s", ctx.MAC)
 			}
 		}
 	}

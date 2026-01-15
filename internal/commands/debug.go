@@ -1,4 +1,4 @@
-package main
+package commands
 
 import (
 	"bufio"
@@ -8,14 +8,17 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"sfpw-tool/internal/eeprom"
+	"sfpw-tool/internal/protocol"
 )
 
-// cmdTestEncode tests the encoding without connecting to device
-func cmdTestEncode() {
+// TestEncode tests the encoding without connecting to device
+func TestEncode() {
 	// Use the same JSON as captured from official app
 	// {"type":"httpRequest","id":"00000000-0000-0000-0000-000000000003","timestamp":1768449224138,"method":"POST","path":"/api/1.0/deadbeefcafe/sif/start","headers":{}}
 
-	req := APIRequest{
+	req := protocol.APIRequest{
 		Type:      "httpRequest",
 		ID:        "00000000-0000-0000-0000-000000000005",
 		Timestamp: 1768449227468,
@@ -37,7 +40,7 @@ func cmdTestEncode() {
 	fmt.Printf("JSON (%d bytes): %s\n\n", len(jsonData), string(jsonData))
 
 	// Use seqNum 5 to match the captured request ID
-	encoded, err := binmeEncode(jsonData, nil, 5)
+	encoded, err := protocol.BinmeEncode(jsonData, nil, 5)
 	if err != nil {
 		log.Fatal("Encode failed: ", err)
 	}
@@ -45,7 +48,7 @@ func cmdTestEncode() {
 	fmt.Printf("Encoded (%d bytes):\n%X\n\n", len(encoded), encoded)
 
 	// Now decode it back
-	headerJSON, bodyData, err := binmeDecode(encoded)
+	headerJSON, bodyData, err := protocol.BinmeDecode(encoded)
 	if err != nil {
 		log.Fatal("Decode failed:", err)
 	}
@@ -63,7 +66,7 @@ func cmdTestEncode() {
 		log.Fatal(err)
 	}
 
-	headerJSON, bodyData, err = binmeDecode(byteArray)
+	headerJSON, bodyData, err = protocol.BinmeDecode(byteArray)
 	if err != nil {
 		log.Fatal("Decode failed:", err)
 	}
@@ -72,8 +75,8 @@ func cmdTestEncode() {
 
 }
 
-// cmdTestPackets reads packets from a TSV file and decodes each one
-func cmdTestPackets(filename string) {
+// TestPackets reads packets from a TSV file and decodes each one
+func TestPackets(filename string) {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatal("Failed to open file:", err)
@@ -132,7 +135,7 @@ func cmdTestPackets(filename string) {
 		}
 
 		// Try to decode as binme packet
-		headerJSON, bodyData, err := binmeDecode(data)
+		headerJSON, bodyData, err := protocol.BinmeDecode(data)
 		if err != nil {
 			fmt.Printf("Frame %s [%s]: decode error: %v\n", frameNum, direction, err)
 			failCount++
@@ -140,7 +143,7 @@ func cmdTestPackets(filename string) {
 		}
 
 		// Parse the header JSON to get type and path/status
-		var envelope map[string]interface{}
+		var envelope map[string]any
 		if err := json.Unmarshal(headerJSON, &envelope); err != nil {
 			fmt.Printf("Frame %s [%s]: JSON parse error: %v\n", frameNum, direction, err)
 			failCount++
@@ -192,8 +195,8 @@ func cmdTestPackets(filename string) {
 	fmt.Printf("Failed: %d\n", failCount)
 }
 
-// cmdParseEEPROM parses and displays SFP/QSFP EEPROM data from a file
-func cmdParseEEPROM(filename string) {
+// ParseEEPROM parses and displays SFP/QSFP EEPROM data from a file
+func ParseEEPROM(filename string) {
 	data, err := os.ReadFile(filename)
 	if err != nil {
 		log.Fatalf("Failed to read file: %v", err)
@@ -231,22 +234,22 @@ func cmdParseEEPROM(filename string) {
 	case 0x03:
 		fmt.Println("=== SFP/SFP+ Module (SFF-8472) ===")
 		fmt.Println()
-		parseSFPEEPROMDetailed(data)
+		eeprom.ParseSFPDetailed(data)
 	case 0x0c:
 		fmt.Println("=== QSFP Module (SFF-8436) ===")
 		fmt.Println()
-		parseQSFPEEPROMDetailed(data)
+		eeprom.ParseQSFPDetailed(data)
 	case 0x0d:
 		fmt.Println("=== QSFP+ Module (SFF-8636) ===")
 		fmt.Println()
-		parseQSFPEEPROMDetailed(data)
+		eeprom.ParseQSFPDetailed(data)
 	case 0x11:
 		fmt.Println("=== QSFP28 Module (SFF-8636) ===")
 		fmt.Println()
-		parseQSFPEEPROMDetailed(data)
+		eeprom.ParseQSFPDetailed(data)
 	default:
 		fmt.Printf("=== Unknown Module Type (identifier: 0x%02X) ===\n\n", identifier)
 		// Try SFP parsing anyway
-		parseSFPEEPROMDetailed(data)
+		eeprom.ParseSFPDetailed(data)
 	}
 }

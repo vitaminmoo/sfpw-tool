@@ -1,4 +1,4 @@
-package main
+package commands
 
 import (
 	"bufio"
@@ -10,16 +10,18 @@ import (
 	"strings"
 	"time"
 
+	"sfpw-tool/internal/ble"
+
 	"tinygo.org/x/bluetooth"
 )
 
-// cmdSnapshotInfo gets info about the snapshot buffer
-func cmdSnapshotInfo(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// SnapshotInfo gets info about the snapshot buffer
+func SnapshotInfo(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
 	fmt.Println("Getting snapshot info...")
 
-	resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/xsfp/sync/start"), nil, 10*time.Second)
+	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/xsfp/sync/start"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}
@@ -40,13 +42,13 @@ func cmdSnapshotInfo(device bluetooth.Device) {
 	}
 }
 
-// cmdSnapshotRead reads the snapshot buffer and saves to file
-func cmdSnapshotRead(device bluetooth.Device, filename string) {
-	ctx := setupAPI(device)
+// SnapshotRead reads the snapshot buffer and saves to file
+func SnapshotRead(device bluetooth.Device, filename string) {
+	ctx := ble.SetupAPI(device)
 
 	// Step 1: GET /xsfp/sync/start to initialize and get size
 	fmt.Println("Initializing snapshot read...")
-	resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/xsfp/sync/start"), nil, 10*time.Second)
+	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/xsfp/sync/start"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to initialize:", err)
 	}
@@ -75,7 +77,7 @@ func cmdSnapshotRead(device bluetooth.Device, filename string) {
 	// Step 2: GET /xsfp/sync/data to read data
 	fmt.Println("Reading snapshot data...")
 	reqBody := fmt.Sprintf(`{"offset":0,"chunk":%d}`, startResp.Size)
-	resp, body, err = ctx.sendRequest("GET", ctx.apiPath("/xsfp/sync/data"), []byte(reqBody), 30*time.Second)
+	resp, body, err = ctx.SendRequest("GET", ctx.APIPath("/xsfp/sync/data"), []byte(reqBody), 30*time.Second)
 	if err != nil {
 		log.Fatal("Failed to read data:", err)
 	}
@@ -108,10 +110,10 @@ func cmdSnapshotRead(device bluetooth.Device, filename string) {
 	}
 }
 
-// cmdSnapshotWrite writes EEPROM data to the snapshot buffer
+// SnapshotWrite writes EEPROM data to the snapshot buffer
 // Use device screen to apply snapshot to physical module
-func cmdSnapshotWrite(device bluetooth.Device, filename string) {
-	ctx := setupAPI(device)
+func SnapshotWrite(device bluetooth.Device, filename string) {
+	ctx := ble.SetupAPI(device)
 
 	// Read the EEPROM file
 	eepromData, err := os.ReadFile(filename)
@@ -157,7 +159,7 @@ func cmdSnapshotWrite(device bluetooth.Device, filename string) {
 	// Step 1: POST /xsfp/sync/start with size
 	fmt.Println("\nInitializing snapshot write...")
 	startBody := fmt.Sprintf(`{"size":%d}`, len(eepromData))
-	resp, body, err := ctx.sendRequest("POST", ctx.apiPath("/xsfp/sync/start"), []byte(startBody), 10*time.Second)
+	resp, body, err := ctx.SendRequest("POST", ctx.APIPath("/xsfp/sync/start"), []byte(startBody), 10*time.Second)
 	if err != nil {
 		log.Fatalf("Failed to initialize snapshot: %v", err)
 	}
@@ -174,7 +176,7 @@ func cmdSnapshotWrite(device bluetooth.Device, filename string) {
 
 	// Step 2: POST /xsfp/sync/data with binary EEPROM data
 	fmt.Printf("Writing %d bytes to snapshot...\n", len(eepromData))
-	resp, body, err = ctx.sendRawBodyRequest("POST", ctx.apiPath("/xsfp/sync/data"), eepromData, 30*time.Second)
+	resp, body, err = ctx.SendRawBodyRequest("POST", ctx.APIPath("/xsfp/sync/data"), eepromData, 30*time.Second)
 	if err != nil {
 		log.Fatalf("Failed to write snapshot data: %v", err)
 	}

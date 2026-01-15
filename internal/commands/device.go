@@ -1,4 +1,4 @@
-package main
+package commands
 
 import (
 	"bytes"
@@ -7,13 +7,18 @@ import (
 	"log"
 	"strings"
 
+	"sfpw-tool/internal/ble"
+	"sfpw-tool/internal/config"
+	"sfpw-tool/internal/protocol"
+	"sfpw-tool/internal/util"
+
 	"tinygo.org/x/bluetooth"
 )
 
-// cmdVersion reads device info by reading from the notify characteristic.
+// Version reads device info by reading from the notify characteristic.
 // This is safe and doesn't require writing any commands.
-func cmdVersion(device bluetooth.Device) {
-	debugf("Discovering services...")
+func Version(device bluetooth.Device) {
+	config.Debugf("Discovering services...")
 
 	allServices, err := device.DiscoverServices(nil)
 	if err != nil {
@@ -23,7 +28,7 @@ func cmdVersion(device bluetooth.Device) {
 	// Find SFP service
 	var sfpService *bluetooth.DeviceService
 	for i := range allServices {
-		if strings.EqualFold(allServices[i].UUID().String(), SFPServiceUUID) {
+		if strings.EqualFold(allServices[i].UUID().String(), ble.SFPServiceUUID) {
 			sfpService = &allServices[i]
 			break
 		}
@@ -42,7 +47,7 @@ func cmdVersion(device bluetooth.Device) {
 	// Find notify characteristic
 	var notifyChar *bluetooth.DeviceCharacteristic
 	for i := range chars {
-		if strings.EqualFold(chars[i].UUID().String(), SFPNotifyCharUUID) {
+		if strings.EqualFold(chars[i].UUID().String(), ble.SFPNotifyCharUUID) {
 			notifyChar = &chars[i]
 			break
 		}
@@ -53,7 +58,7 @@ func cmdVersion(device bluetooth.Device) {
 	}
 
 	// Read device info directly from characteristic
-	debugf("Reading device info...")
+	config.Debugf("Reading device info...")
 	buf := make([]byte, 256)
 	n, err := notifyChar.Read(buf)
 	if err != nil {
@@ -65,10 +70,10 @@ func cmdVersion(device bluetooth.Device) {
 	}
 
 	data := buf[:n]
-	debugf("Received %d bytes: %s", n, string(data))
+	config.Debugf("Received %d bytes: %s", n, string(data))
 
 	// Parse JSON
-	var info DeviceInfo
+	var info protocol.DeviceInfo
 	if err := json.Unmarshal(data, &info); err != nil {
 		// Not JSON, print raw
 		fmt.Println(string(data))
@@ -86,9 +91,9 @@ func cmdVersion(device bluetooth.Device) {
 	}
 }
 
-// cmdExplore lists all services and characteristics.
+// Explore lists all services and characteristics.
 // This is safe and doesn't write anything.
-func cmdExplore(device bluetooth.Device) {
+func Explore(device bluetooth.Device) {
 	fmt.Println("Discovering services...")
 
 	allServices, err := device.DiscoverServices(nil)
@@ -115,7 +120,7 @@ func cmdExplore(device bluetooth.Device) {
 			n, err := char.Read(buf)
 			if err == nil && n > 0 {
 				data := buf[:n]
-				if isTextData(data) {
+				if util.IsTextData(data) {
 					fmt.Printf("      Value: %s\n", string(data))
 				} else {
 					fmt.Printf("      Value: %X\n", data)
@@ -126,9 +131,9 @@ func cmdExplore(device bluetooth.Device) {
 	}
 }
 
-// cmdAPIVersion tests the API protocol by calling /api/version
-func cmdAPIVersion(device bluetooth.Device) {
-	debugf("Discovering services...")
+// APIVersion tests the API protocol by calling /api/version
+func APIVersion(device bluetooth.Device) {
+	config.Debugf("Discovering services...")
 
 	allServices, err := device.DiscoverServices(nil)
 	if err != nil {
@@ -139,9 +144,9 @@ func cmdAPIVersion(device bluetooth.Device) {
 	var sfpService *bluetooth.DeviceService
 	for i := range allServices {
 		uuidStr := allServices[i].UUID().String()
-		if strings.EqualFold(uuidStr, SFPServiceUUID) {
+		if strings.EqualFold(uuidStr, ble.SFPServiceUUID) {
 			sfpService = &allServices[i]
-			debugf("Found SFP service: %s", uuidStr)
+			config.Debugf("Found SFP service: %s", uuidStr)
 			break
 		}
 	}
@@ -162,12 +167,12 @@ func cmdAPIVersion(device bluetooth.Device) {
 	var writeChar, notifyChar *bluetooth.DeviceCharacteristic
 	for i := range chars {
 		uuidStr := chars[i].UUID().String()
-		debugf("Found characteristic: %s", uuidStr)
-		if strings.EqualFold(uuidStr, SFPWriteCharUUID) {
+		config.Debugf("Found characteristic: %s", uuidStr)
+		if strings.EqualFold(uuidStr, ble.SFPWriteCharUUID) {
 			writeChar = &chars[i]
 		}
 		// Response notifications come on d587c47f, not dc272a22
-		if strings.EqualFold(uuidStr, SFPSecondaryNotifyUUID) {
+		if strings.EqualFold(uuidStr, ble.SFPSecondaryNotifyUUID) {
 			notifyChar = &chars[i]
 		}
 	}
@@ -180,10 +185,10 @@ func cmdAPIVersion(device bluetooth.Device) {
 	}
 
 	fmt.Println("Testing API protocol with /api/version...")
-	debugf("Writing to 9280f26c, subscribing to d587c47f")
+	config.Debugf("Writing to 9280f26c, subscribing to d587c47f")
 
 	// Send GET request to /api/version
-	resp, body, err := sendAPIRequest(writeChar, notifyChar, "GET", "/api/version", nil)
+	resp, body, err := ble.SendAPIRequest(writeChar, notifyChar, "GET", "/api/version", nil)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}
@@ -207,11 +212,11 @@ func cmdAPIVersion(device bluetooth.Device) {
 	}
 }
 
-// cmdStats gets device statistics (battery, signal, uptime)
-func cmdStats(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// Stats gets device statistics (battery, signal, uptime)
+func Stats(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
-	resp, body, err := sendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.apiPath("/stats"), nil)
+	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath("/stats"), nil)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}
@@ -240,11 +245,11 @@ func cmdStats(device bluetooth.Device) {
 	fmt.Printf("Signal:       %d dBm\n", stats.SignalDbm)
 }
 
-// cmdInfo gets device info via API
-func cmdInfo(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// Info gets device info via API
+func Info(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
-	resp, body, err := sendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.apiPath(""), nil)
+	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath(""), nil)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}
@@ -264,11 +269,11 @@ func cmdInfo(device bluetooth.Device) {
 	}
 }
 
-// cmdSettings gets device settings
-func cmdSettings(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// Settings gets device settings
+func Settings(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
-	resp, body, err := sendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.apiPath("/settings"), nil)
+	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath("/settings"), nil)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}
@@ -287,11 +292,11 @@ func cmdSettings(device bluetooth.Device) {
 	}
 }
 
-// cmdBluetooth gets bluetooth parameters
-func cmdBluetooth(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// Bluetooth gets bluetooth parameters
+func Bluetooth(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
-	resp, body, err := sendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.apiPath("/bt"), nil)
+	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath("/bt"), nil)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}
@@ -310,11 +315,11 @@ func cmdBluetooth(device bluetooth.Device) {
 	}
 }
 
-// cmdFirmware gets firmware status
-func cmdFirmware(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// Firmware gets firmware status
+func Firmware(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
-	resp, body, err := sendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.apiPath("/fw"), nil)
+	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath("/fw"), nil)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}
@@ -333,13 +338,13 @@ func cmdFirmware(device bluetooth.Device) {
 	}
 }
 
-// cmdReboot reboots the device
-func cmdReboot(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// Reboot reboots the device
+func Reboot(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
 	fmt.Println("Rebooting device...")
 
-	resp, body, err := ctx.sendRequest("POST", ctx.apiPath("/reboot"), nil, 10*1000000000)
+	resp, body, err := ctx.SendRequest("POST", ctx.APIPath("/reboot"), nil, 10*1000000000)
 	if err != nil {
 		// Connection may drop during reboot - that's expected
 		fmt.Println("Reboot command sent (connection lost - this is normal)")

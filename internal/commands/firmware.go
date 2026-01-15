@@ -1,4 +1,4 @@
-package main
+package commands
 
 import (
 	"bufio"
@@ -9,6 +9,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"sfpw-tool/internal/ble"
+	"sfpw-tool/internal/config"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -23,9 +26,17 @@ type FirmwareStatus struct {
 	RemainingTime   int    `json:"remainingTime"`
 }
 
-// cmdFirmwareUpdate uploads and installs new firmware
-func cmdFirmwareUpdate(device bluetooth.Device, filename string) {
-	ctx := setupAPI(device)
+// FirmwareStartResponse represents the response from POST /fw/start
+type FirmwareStartResponse struct {
+	Status string `json:"status"`
+	Offset int    `json:"offset"`
+	Chunk  int    `json:"chunk"`
+	Size   int    `json:"size"`
+}
+
+// FirmwareUpdate uploads and installs new firmware
+func FirmwareUpdate(device bluetooth.Device, filename string) {
+	ctx := ble.SetupAPI(device)
 
 	// Read the firmware file
 	fwData, err := os.ReadFile(filename)
@@ -84,14 +95,14 @@ func cmdFirmwareUpdate(device bluetooth.Device, filename string) {
 	if err != nil {
 		log.Fatalf("Failed to start firmware update: %v", err)
 	}
-	debugf("Start response: %+v", startResp)
+	config.Debugf("Start response: %+v", startResp)
 
 	// Determine chunk size (use what device tells us, or default)
 	chunkSize := 512 // default
 	if startResp.Chunk > 0 {
 		chunkSize = startResp.Chunk
 	}
-	debugf("Using chunk size: %d bytes", chunkSize)
+	config.Debugf("Using chunk size: %d bytes", chunkSize)
 
 	// Step 2: Send firmware data in chunks
 	fmt.Printf("Uploading firmware (%d bytes in %d-byte chunks)...\n", len(fwData), chunkSize)
@@ -152,20 +163,12 @@ func cmdFirmwareUpdate(device bluetooth.Device, filename string) {
 	}
 }
 
-// FirmwareStartResponse represents the response from POST /fw/start
-type FirmwareStartResponse struct {
-	Status string `json:"status"`
-	Offset int    `json:"offset"`
-	Chunk  int    `json:"chunk"`
-	Size   int    `json:"size"`
-}
-
 // startFirmwareUpdate initiates a firmware update
-func startFirmwareUpdate(ctx *APIContext, size int) (*FirmwareStartResponse, error) {
+func startFirmwareUpdate(ctx *ble.APIContext, size int) (*FirmwareStartResponse, error) {
 	// Send size as JSON body
 	reqBody := fmt.Sprintf(`{"size":%d}`, size)
 
-	resp, body, err := ctx.sendRequest("POST", ctx.apiPath("/fw/start"), []byte(reqBody), 10*time.Second)
+	resp, body, err := ctx.SendRequest("POST", ctx.APIPath("/fw/start"), []byte(reqBody), 10*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +180,7 @@ func startFirmwareUpdate(ctx *APIContext, size int) (*FirmwareStartResponse, err
 	var startResp FirmwareStartResponse
 	if err := json.Unmarshal(body, &startResp); err != nil {
 		// Return with defaults if we can't parse
-		debugf("Could not parse start response: %v, body: %s", err, string(body))
+		config.Debugf("Could not parse start response: %v, body: %s", err, string(body))
 		return &FirmwareStartResponse{Status: "ready"}, nil
 	}
 
@@ -185,8 +188,8 @@ func startFirmwareUpdate(ctx *APIContext, size int) (*FirmwareStartResponse, err
 }
 
 // sendFirmwareChunk sends a chunk of firmware data
-func sendFirmwareChunk(ctx *APIContext, chunk []byte, offset int) error {
-	resp, body, err := ctx.sendRawBodyRequest("POST", ctx.apiPath("/fw/data"), chunk, 30*time.Second)
+func sendFirmwareChunk(ctx *ble.APIContext, chunk []byte, offset int) error {
+	resp, body, err := ctx.SendRawBodyRequest("POST", ctx.APIPath("/fw/data"), chunk, 30*time.Second)
 	if err != nil {
 		return err
 	}
@@ -195,13 +198,13 @@ func sendFirmwareChunk(ctx *APIContext, chunk []byte, offset int) error {
 		return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 	}
 
-	debugf("Chunk at offset %d sent successfully", offset)
+	config.Debugf("Chunk at offset %d sent successfully", offset)
 	return nil
 }
 
 // getFirmwareStatus gets the current firmware update status
-func getFirmwareStatus(ctx *APIContext) (*FirmwareStatus, error) {
-	resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/fw"), nil, 10*time.Second)
+func getFirmwareStatus(ctx *ble.APIContext) (*FirmwareStatus, error) {
+	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/fw"), nil, 10*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -219,8 +222,8 @@ func getFirmwareStatus(ctx *APIContext) (*FirmwareStatus, error) {
 }
 
 // abortFirmwareUpdate aborts an in-progress firmware update
-func abortFirmwareUpdate(ctx *APIContext) error {
-	resp, body, err := ctx.sendRequest("POST", ctx.apiPath("/fw/abort"), nil, 10*time.Second)
+func abortFirmwareUpdate(ctx *ble.APIContext) error {
+	resp, body, err := ctx.SendRequest("POST", ctx.APIPath("/fw/abort"), nil, 10*time.Second)
 	if err != nil {
 		return err
 	}
@@ -232,9 +235,9 @@ func abortFirmwareUpdate(ctx *APIContext) error {
 	return nil
 }
 
-// cmdFirmwareAbort aborts an in-progress firmware update
-func cmdFirmwareAbort(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// FirmwareAbort aborts an in-progress firmware update
+func FirmwareAbort(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
 	fmt.Println("Checking firmware status...")
 	status, err := getFirmwareStatus(ctx)
@@ -266,11 +269,11 @@ func cmdFirmwareAbort(device bluetooth.Device) {
 	fmt.Println("Firmware update aborted.")
 }
 
-// cmdFirmwareStatus shows detailed firmware status
-func cmdFirmwareStatus(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// FirmwareStatusCmd shows detailed firmware status
+func FirmwareStatusCmd(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
-	resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/fw"), nil, 10*time.Second)
+	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/fw"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("API request failed:", err)
 	}

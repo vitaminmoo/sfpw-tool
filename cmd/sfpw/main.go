@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"sfpw-tool/internal/ble"
+	"sfpw-tool/internal/commands"
+	"sfpw-tool/internal/config"
 )
 
 func main() {
 	fs := flag.NewFlagSet("sfpw-tool", flag.ContinueOnError)
-	fs.BoolVar(&verbose, "verbose", false, "Enable verbose debug output")
-	fs.BoolVar(&verbose, "v", false, "Enable verbose debug output (shorthand)")
+	fs.BoolVar(&config.Verbose, "verbose", false, "Enable verbose debug output")
+	fs.BoolVar(&config.Verbose, "v", false, "Enable verbose debug output (shorthand)")
 
 	args := os.Args[1:]
 	if len(args) == 0 {
@@ -41,64 +45,64 @@ func main() {
 	switch command {
 	case "version":
 		// Safe: only reads from characteristic, no writes
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdVersion(device)
+		commands.Version(device)
 	case "explore":
 		// Safe: only discovers services, no writes
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdExplore(device)
+		commands.Explore(device)
 	case "api-version":
 		// Get firmware/API version via API
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdAPIVersion(device)
+		commands.APIVersion(device)
 	case "stats":
 		// Get device statistics (battery, signal, uptime)
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdStats(device)
+		commands.Stats(device)
 	case "info":
 		// Get device info via API
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdInfo(device)
+		commands.Info(device)
 	case "settings":
 		// Get device settings
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdSettings(device)
+		commands.Settings(device)
 	case "bt":
 		// Get bluetooth parameters
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdBluetooth(device)
+		commands.Bluetooth(device)
 	case "fw":
 		// Get firmware status
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdFirmware(device)
+		commands.Firmware(device)
 	case "support-dump":
 		// Dump support info archive (syslog, module database)
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdSupportDump(device)
+		commands.SupportDump(device)
 	case "logs":
 		// Show device syslog
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdLogs(device)
+		commands.Logs(device)
 	case "reboot":
 		// Reboot the device
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdReboot(device)
+		commands.Reboot(device)
 	case "module-info":
 		// Get current module details
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdModuleInfo(device)
+		commands.ModuleInfo(device)
 	case "module-read":
 		// Read EEPROM from physical module
 		if commandIdx+1 >= len(args) {
@@ -106,14 +110,14 @@ func main() {
 			fmt.Println("  Reads the physical SFP module EEPROM and saves to file")
 			os.Exit(1)
 		}
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdModuleRead(device, args[commandIdx+1])
+		commands.ModuleRead(device, args[commandIdx+1])
 	case "snapshot-info":
 		// Get snapshot buffer info
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdSnapshotInfo(device)
+		commands.SnapshotInfo(device)
 	case "snapshot-read":
 		// Read snapshot buffer data
 		if commandIdx+1 >= len(args) {
@@ -121,9 +125,9 @@ func main() {
 			fmt.Println("  Reads the snapshot buffer and saves to file")
 			os.Exit(1)
 		}
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdSnapshotRead(device, args[commandIdx+1])
+		commands.SnapshotRead(device, args[commandIdx+1])
 	case "snapshot-write":
 		// Write EEPROM data to snapshot buffer
 		if commandIdx+1 >= len(args) {
@@ -132,9 +136,9 @@ func main() {
 			fmt.Println("  Use the device screen to apply snapshot to physical module")
 			os.Exit(1)
 		}
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdSnapshotWrite(device, args[commandIdx+1])
+		commands.SnapshotWrite(device, args[commandIdx+1])
 	case "parse-eeprom":
 		// Parse and display SFP EEPROM data from a file (no device connection)
 		if commandIdx+1 >= len(args) {
@@ -142,7 +146,7 @@ func main() {
 			fmt.Println("  Parses a 512-byte (SFP) or 640-byte (QSFP) EEPROM dump and displays info")
 			os.Exit(1)
 		}
-		cmdParseEEPROM(args[commandIdx+1])
+		commands.ParseEEPROM(args[commandIdx+1])
 	case "fw-update":
 		// Update device firmware from file
 		if commandIdx+1 >= len(args) {
@@ -150,29 +154,29 @@ func main() {
 			fmt.Println("  Upload and install firmware update from file")
 			os.Exit(1)
 		}
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdFirmwareUpdate(device, args[commandIdx+1])
+		commands.FirmwareUpdate(device, args[commandIdx+1])
 	case "fw-abort":
 		// Abort an in-progress firmware update
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdFirmwareAbort(device)
+		commands.FirmwareAbort(device)
 	case "fw-status":
 		// Get detailed firmware status
-		device := connectToDevice()
+		device := ble.Connect()
 		defer device.Disconnect()
-		cmdFirmwareStatus(device)
+		commands.FirmwareStatusCmd(device)
 	case "test-encode":
 		// Test encoding without connecting - for debugging protocol
-		cmdTestEncode()
+		commands.TestEncode()
 	case "test-packets":
 		// Test decoding packets from packets.csv
 		if commandIdx+1 >= len(args) {
 			fmt.Println("Usage: sfpw-tool test-packets <file.csv>")
 			os.Exit(1)
 		}
-		cmdTestPackets(args[commandIdx+1])
+		commands.TestPackets(args[commandIdx+1])
 	default:
 		fmt.Printf("Unknown command: %s\n\n", command)
 		printUsage()

@@ -1,4 +1,4 @@
-package main
+package commands
 
 import (
 	"archive/tar"
@@ -11,17 +11,21 @@ import (
 	"strings"
 	"time"
 
+	"sfpw-tool/internal/ble"
+	"sfpw-tool/internal/config"
+	"sfpw-tool/internal/eeprom"
+
 	"tinygo.org/x/bluetooth"
 )
 
-// cmdSupportDump downloads support info archive via SIF protocol
+// SupportDump downloads support info archive via SIF protocol
 // Contains syslog, module database entries, and cached EEPROM snapshots
-func cmdSupportDump(device bluetooth.Device) {
-	ctx := setupAPI(device)
+func SupportDump(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
 	// Step 0: Check current SIF status and abort if in progress
 	fmt.Println("Checking SIF status...")
-	resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/sif/info/"), nil, 10*time.Second)
+	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/sif/info/"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to get SIF status:", err)
 	}
@@ -32,11 +36,11 @@ func cmdSupportDump(device bluetooth.Device) {
 	}
 	if resp.StatusCode == 200 {
 		if err := json.Unmarshal(body, &statusResp); err == nil {
-			debugf("Current SIF status: %s (offset=%d)", statusResp.Status, statusResp.Offset)
+			config.Debugf("Current SIF status: %s (offset=%d)", statusResp.Status, statusResp.Offset)
 			// Only abort if actively in progress (not finished/complete/idle)
 			if statusResp.Status == "inprogress" || statusResp.Status == "ready" || statusResp.Status == "continue" {
 				fmt.Printf("SIF operation in progress (status=%s), aborting...\n", statusResp.Status)
-				resp, _, err := ctx.sendRequest("POST", ctx.apiPath("/sif/abort"), nil, 10*time.Second)
+				resp, _, err := ctx.SendRequest("POST", ctx.APIPath("/sif/abort"), nil, 10*time.Second)
 				if err != nil {
 					log.Fatal("Failed to abort SIF:", err)
 				}
@@ -52,7 +56,7 @@ func cmdSupportDump(device bluetooth.Device) {
 	fmt.Println("Starting SIF read operation...")
 
 	// Step 1: POST /sif/start to initiate
-	resp, body, err = ctx.sendRequest("POST", ctx.apiPath("/sif/start"), nil, 10*time.Second)
+	resp, body, err = ctx.SendRequest("POST", ctx.APIPath("/sif/start"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to start SIF read:", err)
 	}
@@ -93,7 +97,7 @@ func cmdSupportDump(device bluetooth.Device) {
 		reqBody := fmt.Sprintf(`{"status":"continue","offset":%d,"chunk":%d}`, offset, chunkSize)
 
 		// Use longer timeout for data transfers (large responses)
-		resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/sif/data/"), []byte(reqBody), 30*time.Second)
+		resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/sif/data/"), []byte(reqBody), 30*time.Second)
 		if err != nil {
 			log.Fatal("Failed to read SIF data:", err)
 		}
@@ -116,7 +120,7 @@ func cmdSupportDump(device bluetooth.Device) {
 	}
 
 	// Step 3: GET /sif/info/ to verify completion
-	resp, body, err = ctx.sendRequest("GET", ctx.apiPath("/sif/info/"), nil, 10*time.Second)
+	resp, body, err = ctx.SendRequest("GET", ctx.APIPath("/sif/info/"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to get SIF info:", err)
 	}
@@ -143,12 +147,12 @@ func cmdSupportDump(device bluetooth.Device) {
 	fmt.Printf("\nSaved to: %s\n", filename)
 }
 
-// cmdLogs downloads the support archive and outputs the syslog to stdout
-func cmdLogs(device bluetooth.Device) {
-	ctx := setupAPI(device)
+// Logs downloads the support archive and outputs the syslog to stdout
+func Logs(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
 
 	// Check current SIF status and abort if in progress
-	resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/sif/info/"), nil, 10*time.Second)
+	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/sif/info/"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to get SIF status:", err)
 	}
@@ -160,7 +164,7 @@ func cmdLogs(device bluetooth.Device) {
 	if resp.StatusCode == 200 {
 		if err := json.Unmarshal(body, &statusResp); err == nil {
 			if statusResp.Status == "inprogress" || statusResp.Status == "ready" || statusResp.Status == "continue" {
-				resp, _, err := ctx.sendRequest("POST", ctx.apiPath("/sif/abort"), nil, 10*time.Second)
+				resp, _, err := ctx.SendRequest("POST", ctx.APIPath("/sif/abort"), nil, 10*time.Second)
 				if err != nil {
 					log.Fatal("Failed to abort SIF:", err)
 				}
@@ -173,7 +177,7 @@ func cmdLogs(device bluetooth.Device) {
 	}
 
 	// Start SIF read
-	resp, body, err = ctx.sendRequest("POST", ctx.apiPath("/sif/start"), nil, 10*time.Second)
+	resp, body, err = ctx.SendRequest("POST", ctx.APIPath("/sif/start"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to start SIF read:", err)
 	}
@@ -204,7 +208,7 @@ func cmdLogs(device bluetooth.Device) {
 		}
 
 		reqBody := fmt.Sprintf(`{"status":"continue","offset":%d,"chunk":%d}`, offset, chunkSize)
-		resp, body, err := ctx.sendRequest("GET", ctx.apiPath("/sif/data/"), []byte(reqBody), 30*time.Second)
+		resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/sif/data/"), []byte(reqBody), 30*time.Second)
 		if err != nil {
 			log.Fatal("Failed to read SIF data:", err)
 		}
@@ -275,7 +279,7 @@ func listTarContents(data []byte) {
 				continue
 			}
 			if len(eepromData) >= 256 {
-				parseSFPInfo(eepromData)
+				eeprom.ParseInfo(eepromData)
 			}
 		}
 	}
