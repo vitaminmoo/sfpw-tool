@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -247,95 +246,22 @@ func Stats(device bluetooth.Device) {
 
 // Info gets device info via API
 func Info(device bluetooth.Device) {
-	ctx := ble.SetupAPI(device)
-
-	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath(""), nil)
-	if err != nil {
-		log.Fatal("API request failed:", err)
-	}
-
-	if resp.StatusCode != 200 {
-		fmt.Printf("Error: status %d\n", resp.StatusCode)
-		fmt.Printf("Body: %s\n", string(body))
-		return
-	}
-
-	// Print raw JSON for now - structure may vary
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
-		fmt.Printf("Body: %s\n", string(body))
-	} else {
-		fmt.Println(prettyJSON.String())
-	}
+	GetAndDisplayJSON(device, "")
 }
 
 // Settings gets device settings
 func Settings(device bluetooth.Device) {
-	ctx := ble.SetupAPI(device)
-
-	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath("/settings"), nil)
-	if err != nil {
-		log.Fatal("API request failed:", err)
-	}
-
-	if resp.StatusCode != 200 {
-		fmt.Printf("Error: status %d\n", resp.StatusCode)
-		fmt.Printf("Body: %s\n", string(body))
-		return
-	}
-
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
-		fmt.Printf("Body: %s\n", string(body))
-	} else {
-		fmt.Println(prettyJSON.String())
-	}
+	GetAndDisplayJSON(device, "/settings")
 }
 
 // Bluetooth gets bluetooth parameters
 func Bluetooth(device bluetooth.Device) {
-	ctx := ble.SetupAPI(device)
-
-	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath("/bt"), nil)
-	if err != nil {
-		log.Fatal("API request failed:", err)
-	}
-
-	if resp.StatusCode != 200 {
-		fmt.Printf("Error: status %d\n", resp.StatusCode)
-		fmt.Printf("Body: %s\n", string(body))
-		return
-	}
-
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
-		fmt.Printf("Body: %s\n", string(body))
-	} else {
-		fmt.Println(prettyJSON.String())
-	}
+	GetAndDisplayJSON(device, "/bt")
 }
 
 // Firmware gets firmware status
 func Firmware(device bluetooth.Device) {
-	ctx := ble.SetupAPI(device)
-
-	resp, body, err := ble.SendAPIRequest(ctx.WriteChar, ctx.NotifyChar, "GET", ctx.APIPath("/fw"), nil)
-	if err != nil {
-		log.Fatal("API request failed:", err)
-	}
-
-	if resp.StatusCode != 200 {
-		fmt.Printf("Error: status %d\n", resp.StatusCode)
-		fmt.Printf("Body: %s\n", string(body))
-		return
-	}
-
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
-		fmt.Printf("Body: %s\n", string(body))
-	} else {
-		fmt.Println(prettyJSON.String())
-	}
+	GetAndDisplayJSON(device, "/fw")
 }
 
 // Reboot reboots the device

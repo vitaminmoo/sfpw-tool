@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"sfpw-tool/internal/ble"
-	"sfpw-tool/internal/config"
 	"sfpw-tool/internal/eeprom"
 
 	"tinygo.org/x/bluetooth"
@@ -25,38 +24,14 @@ func SupportDump(device bluetooth.Device) {
 
 	// Step 0: Check current SIF status and abort if in progress
 	fmt.Println("Checking SIF status...")
-	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/sif/info/"), nil, 10*time.Second)
-	if err != nil {
-		log.Fatal("Failed to get SIF status:", err)
-	}
-
-	var statusResp struct {
-		Status string `json:"status"`
-		Offset int    `json:"offset"`
-	}
-	if resp.StatusCode == 200 {
-		if err := json.Unmarshal(body, &statusResp); err == nil {
-			config.Debugf("Current SIF status: %s (offset=%d)", statusResp.Status, statusResp.Offset)
-			// Only abort if actively in progress (not finished/complete/idle)
-			if statusResp.Status == "inprogress" || statusResp.Status == "ready" || statusResp.Status == "continue" {
-				fmt.Printf("SIF operation in progress (status=%s), aborting...\n", statusResp.Status)
-				resp, _, err := ctx.SendRequest("POST", ctx.APIPath("/sif/abort"), nil, 10*time.Second)
-				if err != nil {
-					log.Fatal("Failed to abort SIF:", err)
-				}
-				if resp.StatusCode != 200 {
-					log.Fatalf("Failed to abort SIF: status %d", resp.StatusCode)
-				}
-				fmt.Println("Previous SIF operation aborted")
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
+	if err := AbortSIFIfRunning(ctx); err != nil {
+		log.Fatal(err)
 	}
 
 	fmt.Println("Starting SIF read operation...")
 
 	// Step 1: POST /sif/start to initiate
-	resp, body, err = ctx.SendRequest("POST", ctx.APIPath("/sif/start"), nil, 10*time.Second)
+	resp, body, err := ctx.SendRequest("POST", ctx.APIPath("/sif/start"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to start SIF read:", err)
 	}
@@ -152,32 +127,12 @@ func Logs(device bluetooth.Device) {
 	ctx := ble.SetupAPI(device)
 
 	// Check current SIF status and abort if in progress
-	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/sif/info/"), nil, 10*time.Second)
-	if err != nil {
-		log.Fatal("Failed to get SIF status:", err)
-	}
-
-	var statusResp struct {
-		Status string `json:"status"`
-		Offset int    `json:"offset"`
-	}
-	if resp.StatusCode == 200 {
-		if err := json.Unmarshal(body, &statusResp); err == nil {
-			if statusResp.Status == "inprogress" || statusResp.Status == "ready" || statusResp.Status == "continue" {
-				resp, _, err := ctx.SendRequest("POST", ctx.APIPath("/sif/abort"), nil, 10*time.Second)
-				if err != nil {
-					log.Fatal("Failed to abort SIF:", err)
-				}
-				if resp.StatusCode != 200 {
-					log.Fatalf("Failed to abort SIF: status %d", resp.StatusCode)
-				}
-				time.Sleep(500 * time.Millisecond)
-			}
-		}
+	if err := AbortSIFIfRunning(ctx); err != nil {
+		log.Fatal(err)
 	}
 
 	// Start SIF read
-	resp, body, err = ctx.SendRequest("POST", ctx.APIPath("/sif/start"), nil, 10*time.Second)
+	resp, body, err := ctx.SendRequest("POST", ctx.APIPath("/sif/start"), nil, 10*time.Second)
 	if err != nil {
 		log.Fatal("Failed to start SIF read:", err)
 	}

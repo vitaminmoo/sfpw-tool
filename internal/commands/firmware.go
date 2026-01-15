@@ -1,13 +1,10 @@
 package commands
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"sfpw-tool/internal/ble"
@@ -58,11 +55,7 @@ func FirmwareUpdate(device bluetooth.Device, filename string) {
 
 	if status.IsUpdating {
 		fmt.Println("WARNING: A firmware update is already in progress!")
-		fmt.Print("Abort existing update and start new one? (yes/no): ")
-		reader := bufio.NewReader(os.Stdin)
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(confirm)
-		if confirm != "yes" {
+		if !ConfirmAction("Abort existing update and start new one? (yes/no): ") {
 			fmt.Println("Aborted.")
 			return
 		}
@@ -79,12 +72,7 @@ func FirmwareUpdate(device bluetooth.Device, filename string) {
 	fmt.Println("WARNING: Firmware update is a potentially dangerous operation!")
 	fmt.Println("Do not disconnect power or BLE during the update.")
 	fmt.Printf("File size: %d bytes\n", len(fwData))
-	fmt.Print("Type 'yes' to start firmware update: ")
-
-	reader := bufio.NewReader(os.Stdin)
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(confirm)
-	if confirm != "yes" {
+	if !ConfirmAction("Type 'yes' to start firmware update: ") {
 		fmt.Println("Aborted.")
 		return
 	}
@@ -251,12 +239,7 @@ func FirmwareAbort(device bluetooth.Device) {
 	}
 
 	fmt.Printf("Update in progress: %d%% complete, status: %s\n", status.ProgressPercent, status.Status)
-	fmt.Print("Abort update? (yes/no): ")
-
-	reader := bufio.NewReader(os.Stdin)
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(confirm)
-	if confirm != "yes" {
+	if !ConfirmAction("Abort update? (yes/no): ") {
 		fmt.Println("Cancelled.")
 		return
 	}
@@ -284,10 +267,5 @@ func FirmwareStatusCmd(device bluetooth.Device) {
 		return
 	}
 
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
-		fmt.Printf("Body: %s\n", string(body))
-	} else {
-		fmt.Println(prettyJSON.String())
-	}
+	PrintJSON(body)
 }

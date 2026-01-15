@@ -1,13 +1,10 @@
 package commands
 
 import (
-	"bufio"
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"sfpw-tool/internal/ble"
@@ -34,12 +31,7 @@ func SnapshotInfo(device bluetooth.Device) {
 		return
 	}
 
-	var prettyJSON bytes.Buffer
-	if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
-		fmt.Printf("Body: %s\n", string(body))
-	} else {
-		fmt.Println(prettyJSON.String())
-	}
+	PrintJSON(body)
 }
 
 // SnapshotRead reads the snapshot buffer and saves to file
@@ -99,15 +91,7 @@ func SnapshotRead(device bluetooth.Device, filename string) {
 	fmt.Printf("Saved to: %s\n", filename)
 
 	// Display info about the data
-	if len(body) >= 96 {
-		vendorName := strings.TrimSpace(string(body[20:36]))
-		vendorPN := strings.TrimSpace(string(body[40:56]))
-		vendorSN := strings.TrimSpace(string(body[68:84]))
-		fmt.Printf("\nModule info:\n")
-		fmt.Printf("  Vendor: %s\n", vendorName)
-		fmt.Printf("  Part:   %s\n", vendorPN)
-		fmt.Printf("  S/N:    %s\n", vendorSN)
-	}
+	DisplayEEPROMInfo(body)
 }
 
 // SnapshotWrite writes EEPROM data to the snapshot buffer
@@ -134,24 +118,12 @@ func SnapshotWrite(device bluetooth.Device, filename string) {
 	fmt.Printf("Loaded %s EEPROM data: %d bytes from %s\n", moduleType, len(eepromData), filename)
 
 	// Parse and display what we're about to write
-	if len(eepromData) >= 96 {
-		vendorName := strings.TrimSpace(string(eepromData[20:36]))
-		vendorPN := strings.TrimSpace(string(eepromData[40:56]))
-		vendorSN := strings.TrimSpace(string(eepromData[68:84]))
-		fmt.Printf("  Vendor: %s\n", vendorName)
-		fmt.Printf("  Part:   %s\n", vendorPN)
-		fmt.Printf("  S/N:    %s\n", vendorSN)
-	}
+	DisplayEEPROMInfo(eepromData)
 
 	fmt.Println()
 	fmt.Println("This will write to the snapshot buffer.")
 	fmt.Println("Use the device screen to apply snapshot to module.")
-	fmt.Print("Type 'yes' to continue: ")
-
-	reader := bufio.NewReader(os.Stdin)
-	confirm, _ := reader.ReadString('\n')
-	confirm = strings.TrimSpace(confirm)
-	if confirm != "yes" {
+	if !ConfirmAction("Type 'yes' to continue: ") {
 		fmt.Println("Aborted.")
 		return
 	}
@@ -191,12 +163,7 @@ func SnapshotWrite(device bluetooth.Device, filename string) {
 
 	fmt.Printf("Snapshot write complete!\n")
 	if len(body) > 0 {
-		var prettyJSON bytes.Buffer
-		if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
-			fmt.Printf("Response: %s\n", string(body))
-		} else {
-			fmt.Println(prettyJSON.String())
-		}
+		PrintJSON(body)
 	}
 
 	fmt.Println("\nUse the device screen to apply snapshot to module.")

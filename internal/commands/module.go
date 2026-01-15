@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"sfpw-tool/internal/ble"
@@ -103,13 +102,5 @@ func ModuleRead(device bluetooth.Device, filename string) {
 	fmt.Printf("Saved to: %s\n", filename)
 
 	// Display info about the data
-	if len(body) >= 96 {
-		vendorName := strings.TrimSpace(string(body[20:36]))
-		vendorPN := strings.TrimSpace(string(body[40:56]))
-		vendorSN := strings.TrimSpace(string(body[68:84]))
-		fmt.Printf("\nModule info:\n")
-		fmt.Printf("  Vendor: %s\n", vendorName)
-		fmt.Printf("  Part:   %s\n", vendorPN)
-		fmt.Printf("  S/N:    %s\n", vendorSN)
-	}
+	DisplayEEPROMInfo(body)
 }
