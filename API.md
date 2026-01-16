@@ -739,17 +739,9 @@ The firmware checks these flags before writing to a property - if the correspond
 4. Deduplicate collected entries by password value (4-byte comparison)
 5. Try each unique password in sequence until unlock succeeds
 
-**Key functions:**
-
-| Function       | Address    | Purpose                                            |
-| -------------- | ---------- | -------------------------------------------------- |
-| `FUN_420158cc` | 0x420158cc | strcmp lookup, returns first match                 |
-| `FUN_420158ec` | 0x420158ec | Collects all entries matching part number (max 20) |
-| `FUN_42015934` | 0x42015934 | Deduplicates by password value                     |
-
 **Key difference from 1.0.10:** The fallback mechanism changed. In 1.0.10, if the first-match password fails, the device tries ALL unique passwords from the entire database. In 1.1.3, it only tries passwords from entries that match the module's part number.
 
-### Changes in 1.1.1+
+### Database Content Differences in 1.1.1+
 
 Starting in 1.1.1, some modules have **multiple database entries** with different passwords. This allows the device to try alternate passwords if the first one fails:
 
@@ -791,8 +783,8 @@ sfpw fw passdb firmware.bin
 # Output as JSON
 sfpw fw passdb -j firmware.bin
 
-# Search for specific part number
-sfpw fw passdb -s "OM-SFP28" firmware.bin
+# Evaluate a specific part number to see what passwords would be tried
+sfpw fw passdb -s "OM-SFP28-LR" firmware.bin
 ```
 
 ---
