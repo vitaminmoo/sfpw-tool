@@ -31,27 +31,27 @@ type CLI struct {
 	Debug    DebugCmd    `cmd:"" help:"Debug and development tools"`
 
 	// Legacy commands for backwards compatibility (hidden)
-	Version      VersionCmd      `cmd:"" hidden:""`
-	APIVersion   APIVersionCmd   `cmd:"" name:"api-version" hidden:""`
-	Stats        StatsCmd        `cmd:"" hidden:""`
-	Info         InfoCmd         `cmd:"" hidden:""`
-	Settings     SettingsCmd     `cmd:"" hidden:""`
-	Bt           BtCmd           `cmd:"" hidden:""`
-	Logs         LogsCmd         `cmd:"" hidden:""`
-	Reboot       RebootCmd       `cmd:"" hidden:""`
-	Explore      ExploreCmd      `cmd:"" hidden:""`
-	ModuleInfo   ModuleInfoLegacyCmd   `cmd:"" name:"module-info" hidden:""`
-	ModuleRead   ModuleReadLegacyCmd   `cmd:"" name:"module-read" hidden:""`
-	SnapshotInfo SnapshotInfoLegacyCmd `cmd:"" name:"snapshot-info" hidden:""`
-	SnapshotRead SnapshotReadLegacyCmd `cmd:"" name:"snapshot-read" hidden:""`
-	SnapshotWrite SnapshotWriteLegacyCmd `cmd:"" name:"snapshot-write" hidden:""`
-	FwUpdate     FwUpdateLegacyCmd     `cmd:"" name:"fw-update" hidden:""`
-	FwAbort      FwAbortLegacyCmd      `cmd:"" name:"fw-abort" hidden:""`
-	FwStatusLegacy FwStatusLegacyCmd   `cmd:"" name:"fw-status" hidden:""`
-	SupportDump  SupportDumpLegacyCmd  `cmd:"" name:"support-dump" hidden:""`
-	ParseEeprom  ParseEepromLegacyCmd  `cmd:"" name:"parse-eeprom" hidden:""`
-	TestEncode   TestEncodeLegacyCmd   `cmd:"" name:"test-encode" hidden:""`
-	TestPackets  TestPacketsLegacyCmd  `cmd:"" name:"test-packets" hidden:""`
+	Version        VersionCmd             `cmd:"" hidden:""`
+	APIVersion     APIVersionCmd          `cmd:"" name:"api-version" hidden:""`
+	Stats          StatsCmd               `cmd:"" hidden:""`
+	Info           InfoCmd                `cmd:"" hidden:""`
+	Settings       SettingsCmd            `cmd:"" hidden:""`
+	Bt             BtCmd                  `cmd:"" hidden:""`
+	Logs           LogsCmd                `cmd:"" hidden:""`
+	Reboot         RebootCmd              `cmd:"" hidden:""`
+	Explore        ExploreCmd             `cmd:"" hidden:""`
+	ModuleInfo     ModuleInfoLegacyCmd    `cmd:"" name:"module-info" hidden:""`
+	ModuleRead     ModuleReadLegacyCmd    `cmd:"" name:"module-read" hidden:""`
+	SnapshotInfo   SnapshotInfoLegacyCmd  `cmd:"" name:"snapshot-info" hidden:""`
+	SnapshotRead   SnapshotReadLegacyCmd  `cmd:"" name:"snapshot-read" hidden:""`
+	SnapshotWrite  SnapshotWriteLegacyCmd `cmd:"" name:"snapshot-write" hidden:""`
+	FwUpdate       FwUpdateLegacyCmd      `cmd:"" name:"fw-update" hidden:""`
+	FwAbort        FwAbortLegacyCmd       `cmd:"" name:"fw-abort" hidden:""`
+	FwStatusLegacy FwStatusLegacyCmd      `cmd:"" name:"fw-status" hidden:""`
+	SupportDump    SupportDumpLegacyCmd   `cmd:"" name:"support-dump" hidden:""`
+	ParseEeprom    ParseEepromLegacyCmd   `cmd:"" name:"parse-eeprom" hidden:""`
+	TestEncode     TestEncodeLegacyCmd    `cmd:"" name:"test-encode" hidden:""`
+	TestPackets    TestPacketsLegacyCmd   `cmd:"" name:"test-packets" hidden:""`
 }
 
 // --- TUI Command ---
@@ -224,7 +224,7 @@ type FwCmd struct {
 	Status   FwStatusCmd   `cmd:"" help:"Get detailed firmware status"`
 	Update   FwUpdateCmd   `cmd:"" help:"Upload and install firmware (from file or downloaded version)"`
 	Abort    FwAbortCmd    `cmd:"" help:"Abort an in-progress firmware update"`
-	Download FwDownloadCmd `cmd:"" help:"Download all available firmware versions"`
+	Download FwDownloadCmd `cmd:"" help:"Download all available firmware versions from the internet"`
 	List     FwListCmd     `cmd:"" help:"List downloaded firmware files"`
 	Path     FwPathCmd     `cmd:"" help:"Show firmware storage directory path"`
 	Passdb   FwPassdbCmd   `cmd:"" help:"Extract password database from firmware image"`
@@ -386,16 +386,46 @@ func (c *FwDownloadCmd) Run(globals *CLI) error {
 }
 
 type FwPassdbCmd struct {
-	File   string `arg:"" help:"ESP32 firmware image file (.bin)"`
-	JSON   bool   `help:"Output as JSON" short:"j"`
-	Search string `help:"Emulate firmware lookup for part number (exact match, shows passwords that would be tried)" short:"s"`
+	FileOrVersion string `arg:"" help:"Firmware file path or downloaded version (e.g., v1.1.1)"`
+	JSON          bool   `help:"Output as JSON" short:"j"`
+	Search        string `help:"Emulate firmware lookup for part number (exact match, shows passwords that would be tried)" short:"s"`
 }
 
 func (c *FwPassdbCmd) Run(globals *CLI) error {
 	config.Verbose = globals.Verbose
 
+	// Check if it's a file path or a version string
+	filePath := c.FileOrVersion
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		// Not a file, try to find in firmware store
+		store, err := firmware.NewFirmwareStore()
+		if err != nil {
+			return fmt.Errorf("failed to open firmware store: %w", err)
+		}
+
+		// Look for matching version
+		entries, err := store.List()
+		if err != nil {
+			return fmt.Errorf("failed to list firmware: %w", err)
+		}
+
+		version := c.FileOrVersion
+		// Try with and without 'v' prefix
+		for _, e := range entries {
+			if e.Version == version || e.Version == "v"+version || "v"+e.Version == version {
+				filePath = e.Path
+				fmt.Printf("Using downloaded firmware: %s\n", e.Version)
+				break
+			}
+		}
+
+		if filePath == c.FileOrVersion {
+			return fmt.Errorf("firmware not found: %s (not a file or downloaded version)", c.FileOrVersion)
+		}
+	}
+
 	// Parse the firmware image
-	img, err := firmware.ParseESP32Image(c.File)
+	img, err := firmware.ParseESP32Image(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to parse firmware: %w", err)
 	}

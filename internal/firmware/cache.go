@@ -173,6 +173,11 @@ func (s *FirmwareStore) Download(v FirmwareVersion, progress ProgressCallback) (
 		return "", fmt.Errorf("failed to finalize download: %w", err)
 	}
 
+	// Set mtime to the firmware release date
+	if !v.Created.IsZero() {
+		os.Chtimes(destPath, v.Created, v.Created)
+	}
+
 	return destPath, nil
 }
 
