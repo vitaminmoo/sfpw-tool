@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -32,6 +33,37 @@ type APIContext struct {
 // APIPath builds an API path with the device MAC
 func (ctx *APIContext) APIPath(endpoint string) string {
 	return fmt.Sprintf("/api/1.0/%s%s", ctx.MAC, endpoint)
+}
+
+// IsConnected performs a lightweight check to verify the BLE connection is alive.
+// Returns true if the device appears connected, false otherwise.
+func (ctx *APIContext) IsConnected() bool {
+	if ctx.WriteChar == nil {
+		return false
+	}
+	// Attempt a minimal characteristic read to check connection.
+	// Connection errors indicate disconnect.
+	buf := make([]byte, 1)
+	_, err := ctx.WriteChar.Read(buf)
+	return err == nil || !isDisconnectError(err)
+}
+
+// isDisconnectError checks if an error indicates a BLE disconnect.
+func isDisconnectError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "disconnected") ||
+		strings.Contains(msg, "not connected") ||
+		strings.Contains(msg, "no route") ||
+		strings.Contains(msg, "connection") ||
+		strings.Contains(msg, "ble error")
+}
+
+// IsDisconnectError exports the disconnect error check for use by other packages.
+func IsDisconnectError(err error) bool {
+	return isDisconnectError(err)
 }
 
 // enableNotifications sets up the notification handler for API responses

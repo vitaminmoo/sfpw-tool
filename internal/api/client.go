@@ -59,6 +59,19 @@ func (c *Client) MAC() string {
 	return ""
 }
 
+// IsConnected checks if the underlying BLE connection is still alive.
+func (c *Client) IsConnected() bool {
+	if c.ctx == nil {
+		return false
+	}
+	return c.ctx.IsConnected()
+}
+
+// IsDisconnectError checks if an error indicates a BLE disconnect.
+func (c *Client) IsDisconnectError(err error) bool {
+	return ble.IsDisconnectError(err)
+}
+
 // --- Low-level send methods ---
 
 // RequestOptions configures how a request is sent.
@@ -198,6 +211,70 @@ func (c *Client) SendBinary(startEndpoint, dataEndpoint string, data []byte) err
 			return fmt.Errorf("status %d: %s", resp.StatusCode, string(body))
 		}
 		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// FirmwareProgressCallback reports firmware update progress.
+type FirmwareProgressCallback func(phase string, current, total int64)
+
+// UpdateFirmware uploads and installs firmware with progress reporting.
+func (c *Client) UpdateFirmware(data []byte, progress FirmwareProgressCallback) error {
+	if c.ctx == nil {
+		return fmt.Errorf("not connected")
+	}
+
+	// Step 1: Start firmware update
+	startBody := fmt.Sprintf(`{"size":%d}`, len(data))
+	resp, body, err := c.Send("POST", "/fw/start", []byte(startBody), &RequestOptions{Timeout: 10 * time.Second})
+	if err != nil {
+		return fmt.Errorf("failed to start update: %w", err)
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("start failed: status %d: %s", resp.StatusCode, string(body))
+	}
+
+	// Parse chunk size from response
+	var startResp struct {
+		Chunk int `json:"chunk"`
+	}
+	json.Unmarshal(body, &startResp)
+	chunkSize := 512
+	if startResp.Chunk > 0 {
+		chunkSize = startResp.Chunk
+	}
+
+	// Step 2: Send firmware data in chunks
+	totalSize := int64(len(data))
+	for offset := 0; offset < len(data); offset += chunkSize {
+		end := offset + chunkSize
+		if end > len(data) {
+			end = len(data)
+		}
+		chunk := data[offset:end]
+
+		resp, body, err := c.Send("POST", "/fw/data", chunk, &RequestOptions{
+			Timeout: 30 * time.Second,
+			RawBody: true,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to send chunk at %d: %w", offset, err)
+		}
+		if resp.StatusCode != 200 {
+			return fmt.Errorf("chunk failed: status %d: %s", resp.StatusCode, string(body))
+		}
+
+		if progress != nil {
+			progress("uploading", int64(offset+len(chunk)), totalSize)
+		}
+
+		// Small delay between chunks
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	if progress != nil {
+		progress("installing", totalSize, totalSize)
 	}
 
 	return nil

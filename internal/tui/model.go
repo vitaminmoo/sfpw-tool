@@ -2,10 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/spinner"
@@ -14,6 +17,7 @@ import (
 	"tinygo.org/x/bluetooth"
 
 	"sfpw-tool/internal/api"
+	"sfpw-tool/internal/firmware"
 	"sfpw-tool/internal/store"
 )
 
@@ -26,6 +30,8 @@ const (
 	ViewModule
 	ViewStore
 	ViewStoreDetail
+	ViewFirmware
+	ViewFirmwareSelect // Select a firmware version to install
 	ViewHelp
 )
 
@@ -68,13 +74,44 @@ type Model struct {
 	moduleInfoRefresh bool               // True during periodic refresh (no spinner)
 
 	// Device data
-	client     *api.Client
-	stats      *api.Stats
-	deviceInfo *api.DeviceInfo
-	settings   *api.Settings
-	bluetooth  *api.BluetoothParams
-	firmware   *api.FirmwareStatus
-	loading    bool // True when fetching data
+	client               *api.Client
+	stats                *api.Stats
+	deviceInfo           *api.DeviceInfo
+	settings             *api.Settings
+	bluetooth            *api.BluetoothParams
+	firmware             *api.FirmwareStatus
+	loading              bool // True when fetching data
+	connectionCheckFails int  // Consecutive connection check failures
+
+	// Firmware update state
+	availableFirmware   []firmware.FirmwareVersion
+	availableFwLoading  bool
+	availableFwError    string
+	lastFirmwareRefresh time.Time // When we last refreshed the firmware list
+	cachedFirmware      []firmware.CacheEntry
+
+	// Firmware sync progress (downloading all versions)
+	fwSyncing          bool
+	fwSyncPhase        string  // "fetching", "downloading X of Y", "complete"
+	fwSyncProgress     float64 // 0.0 to 1.0
+	fwSyncCurrentVer   string  // Version currently being downloaded
+
+	// Selected firmware for flashing
+	selectedFwVersion string // e.g. "v1.1.3"
+	selectedFwPath    string // path to cached .bin file
+	selectedFwSize    int64
+	selectedFwSHA256  string
+
+	// Firmware flash progress
+	fwFlashing      bool
+	fwFlashPhase    string // "uploading", "installing", "complete", "error"
+	fwFlashProgress float64
+	fwFlashError    string
+
+	// File picker state
+	filepicker       filepicker.Model
+	filePickerActive bool
+	selectedFilePath string
 
 	// Components
 	keys    KeyMap
@@ -160,6 +197,67 @@ type snapshotInfoMsg struct {
 // moduleInfoTickMsg triggers periodic module/snapshot info refresh.
 type moduleInfoTickMsg time.Time
 
+// connectionCheckMsg triggers a periodic connection health check.
+type connectionCheckMsg time.Time
+
+// availableFirmwareMsg delivers available firmware versions from cloud.
+type availableFirmwareMsg struct {
+	versions []firmware.FirmwareVersion
+	err      error
+}
+
+// firmwareSyncProgressMsg reports progress during firmware sync.
+type firmwareSyncProgressMsg struct {
+	phase      string  // "fetching", "downloading"
+	progress   float64 // 0.0 to 1.0
+	currentVer string  // Version currently being downloaded
+	current    int     // Current item number
+	total      int     // Total items
+}
+
+// firmwareSyncCompleteMsg signals firmware sync completed.
+type firmwareSyncCompleteMsg struct {
+	versions []firmware.FirmwareVersion
+	cached   []firmware.CacheEntry
+	err      error
+}
+
+// cachedFirmwareMsg delivers cached firmware list.
+type cachedFirmwareMsg struct {
+	cached []firmware.CacheEntry
+}
+
+// firmwareImportedMsg signals a file was imported to cache.
+type firmwareImportedMsg struct {
+	version string
+	path    string
+	size    int64
+	sha256  string
+	err     error
+}
+
+// firmwareDownloadedMsg signals a cloud firmware was downloaded.
+type firmwareDownloadedMsg struct {
+	version string
+	path    string
+	size    int64
+	sha256  string
+	err     error
+}
+
+// firmwareFlashProgressMsg reports firmware flash progress.
+type firmwareFlashProgressMsg struct {
+	phase    string  // "uploading", "installing"
+	progress float64 // 0.0 to 1.0
+}
+
+// firmwareFlashCompleteMsg signals firmware flash completed.
+type firmwareFlashCompleteMsg struct {
+	success bool
+	message string
+	err     error
+}
+
 // NewModel creates a new TUI model.
 func NewModel() Model {
 	h := help.New()
@@ -195,7 +293,29 @@ func NewModel() Model {
 			Description: "Browse saved module profiles",
 			View:        ViewStore,
 		},
+		{
+			Title:       "Firmware",
+			Description: "Update device firmware",
+			View:        ViewFirmware,
+		},
 	}
+
+	// Initialize file picker for firmware selection
+	fp := filepicker.New()
+	fp.AllowedTypes = []string{".bin"}
+	fp.DirAllowed = true    // Allow navigating into directories
+	fp.FileAllowed = true   // Allow selecting files
+	fp.ShowHidden = false
+	fp.ShowSize = true
+	fp.ShowPermissions = false
+	fp.SetHeight(15)        // Show 15 files at a time
+	// Start in current working directory
+	if cwd, err := os.Getwd(); err == nil {
+		fp.CurrentDirectory = cwd
+	} else {
+		fp.CurrentDirectory = "."
+	}
+	m.filepicker = fp
 
 	// Load store profiles
 	m.loadStoreProfiles()
@@ -234,6 +354,38 @@ func isTransientError(err error) bool {
 
 // Update handles messages and updates the model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle file picker if active
+	if m.filePickerActive {
+		switch msg := msg.(type) {
+		case tea.KeyMsg:
+			// Check for escape to cancel
+			if key.Matches(msg, m.keys.Back) || key.Matches(msg, m.keys.Quit) {
+				m.filePickerActive = false
+				return m, nil
+			}
+		}
+
+		var cmd tea.Cmd
+		m.filepicker, cmd = m.filepicker.Update(msg)
+
+		// Check if a file was selected
+		if didSelect, path := m.filepicker.DidSelectFile(msg); didSelect {
+			m.filePickerActive = false
+			m.selectedFilePath = path
+			// Import to cache
+			return m, importFirmwareFileCmd(path)
+		}
+
+		// Check if file picker was cancelled
+		if didSelect, _ := m.filepicker.DidSelectDisabledFile(msg); didSelect {
+			m.filePickerActive = false
+			m.availableFwError = "Invalid file type selected (must be .bin)"
+			return m, nil
+		}
+
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -275,9 +427,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = "Connected"
 		m.errorMsg = ""
 		m.loading = true
+		m.connectionCheckFails = 0
 		// Fetch device info first, stats will be fetched after
+		// Also start connection health check
 		return m, tea.Batch(
 			fetchDeviceInfoCmd(m.client),
+			connectionCheckCmd(),
 			m.spinner.Tick,
 		)
 
@@ -445,7 +600,128 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, moduleInfoTickCmd()
 		}
 		return m, nil
+
+	case availableFirmwareMsg:
+		m.availableFwLoading = false
+		if msg.err != nil {
+			m.availableFwError = msg.err.Error()
+			return m, nil
+		}
+		m.availableFirmware = msg.versions
+		m.availableFwError = ""
+		return m, nil
+
+	case firmwareSyncProgressMsg:
+		m.fwSyncPhase = msg.phase
+		m.fwSyncProgress = msg.progress
+		m.fwSyncCurrentVer = msg.currentVer
+		return m, nil
+
+	case firmwareSyncCompleteMsg:
+		m.fwSyncing = false
+		m.fwSyncPhase = ""
+		m.lastFirmwareRefresh = time.Now()
+		if msg.err != nil {
+			m.availableFwError = msg.err.Error()
+			return m, nil
+		}
+		m.availableFirmware = msg.versions
+		m.cachedFirmware = msg.cached
+		m.availableFwError = ""
+		return m, nil
+
+	case cachedFirmwareMsg:
+		m.cachedFirmware = msg.cached
+		return m, nil
+
+	case connectionCheckMsg:
+		// Periodic connection health check
+		if m.connected && m.client != nil {
+			if !m.client.IsConnected() {
+				m.connectionCheckFails++
+				if m.connectionCheckFails >= 2 {
+					// Declare disconnected after 2 consecutive failures
+					return m.handleDisconnect()
+				}
+			} else {
+				m.connectionCheckFails = 0
+			}
+			return m, connectionCheckCmd()
+		}
+		return m, nil
+
+	case firmwareImportedMsg:
+		if msg.err != nil {
+			m.availableFwError = fmt.Sprintf("Failed to import file: %v", msg.err)
+			return m, nil
+		}
+		m.selectedFwVersion = msg.version
+		m.selectedFwPath = msg.path
+		m.selectedFwSize = msg.size
+		m.selectedFwSHA256 = msg.sha256
+		m.availableFwError = ""
+		m.statusMsg = fmt.Sprintf("Imported %s to cache", msg.version)
+		return m, nil
+
+	case firmwareDownloadedMsg:
+		if msg.err != nil {
+			m.availableFwError = fmt.Sprintf("Failed to download: %v", msg.err)
+			return m, nil
+		}
+		m.selectedFwVersion = msg.version
+		m.selectedFwPath = msg.path
+		m.selectedFwSize = msg.size
+		m.selectedFwSHA256 = msg.sha256
+		m.availableFwError = ""
+		m.statusMsg = fmt.Sprintf("Downloaded %s", msg.version)
+		return m, nil
+
+	case firmwareFlashProgressMsg:
+		m.fwFlashPhase = msg.phase
+		m.fwFlashProgress = msg.progress
+		return m, nil
+
+	case firmwareFlashCompleteMsg:
+		m.fwFlashing = false
+		if msg.err != nil {
+			m.fwFlashPhase = "error"
+			m.fwFlashError = msg.err.Error()
+			return m, nil
+		}
+		m.fwFlashPhase = "complete"
+		m.statusMsg = msg.message
+		// Clear selection after successful flash
+		m.selectedFwVersion = ""
+		m.selectedFwPath = ""
+		return m, nil
 	}
+	return m, nil
+}
+
+// handleDisconnect handles device disconnection.
+func (m Model) handleDisconnect() (tea.Model, tea.Cmd) {
+	m.connected = false
+	m.connecting = false
+	m.searching = false
+	m.client = nil
+	m.stats = nil
+	m.deviceInfo = nil
+	m.settings = nil
+	m.bluetooth = nil
+	m.firmware = nil
+	m.moduleDetails = nil
+	m.snapshotInfo = nil
+	m.connectionCheckFails = 0
+	m.loading = false
+	m.moduleLoading = false
+	m.moduleInfoLoading = false
+	// Stop any in-progress firmware flash
+	if m.fwFlashing {
+		m.fwFlashing = false
+		m.fwFlashError = "Device disconnected during flash"
+	}
+	m.errorMsg = "Device disconnected"
+	m.statusMsg = "Press 'c' to reconnect"
 	return m, nil
 }
 
@@ -515,6 +791,8 @@ func (m Model) goBack() (tea.Model, tea.Cmd) {
 	case ViewStoreDetail:
 		m.view = ViewStore
 		m.selectedHash = ""
+	case ViewFirmwareSelect:
+		m.view = ViewFirmware
 	default:
 		m.view = ViewMain
 	}
@@ -556,6 +834,32 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 					m.spinner.Tick,
 				)
 			}
+
+			// Firmware view: check if we need to sync firmware cache
+			if targetView == ViewFirmware {
+				var cmds []tea.Cmd
+				cmds = append(cmds, m.spinner.Tick)
+
+				// Fetch device firmware status if connected
+				if m.connected && m.client != nil && m.firmware == nil {
+					cmds = append(cmds, fetchFirmwareCmd(m.client))
+				}
+
+				// Check if we need to sync (hasn't been done in 10 minutes)
+				needsSync := time.Since(m.lastFirmwareRefresh) > 10*time.Minute
+				if needsSync && !m.fwSyncing && !m.availableFwLoading {
+					m.fwSyncing = true
+					m.fwSyncPhase = "fetching"
+					m.fwSyncProgress = 0
+					m.availableFwError = ""
+					cmds = append(cmds, syncFirmwareCacheCmd())
+				} else if !needsSync && len(m.cachedFirmware) == 0 {
+					// Just refresh cached list if we have recent data but no cache loaded
+					cmds = append(cmds, refreshCachedFirmwareCmd())
+				}
+
+				return m, tea.Batch(cmds...)
+			}
 		}
 	case ViewStore:
 		// Save cursor position before leaving
@@ -589,6 +893,90 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 				m.spinner.Tick,
 			)
 		}
+
+	case ViewFirmware:
+		// Handle firmware menu selection based on dynamic menu
+		menuItems := m.getFirmwareMenuItems()
+		if m.cursor >= len(menuItems) || m.fwSyncing {
+			return m, nil
+		}
+
+		selectedItem := menuItems[m.cursor].title
+		switch selectedItem {
+		case "Select from Cache":
+			if len(m.cachedFirmware) == 0 {
+				return m, nil
+			}
+			// Go to version selection view
+			m.cursorHistory[m.view] = m.cursor
+			m.view = ViewFirmwareSelect
+			m.cursor = 0
+			return m, nil
+		case "Select from File":
+			// Activate file picker
+			m.filePickerActive = true
+			// Reset to current working directory
+			if cwd, err := os.Getwd(); err == nil {
+				m.filepicker.CurrentDirectory = cwd
+			}
+			return m, m.filepicker.Init()
+		case "Refresh Cache":
+			if !m.fwSyncing {
+				m.fwSyncing = true
+				m.fwSyncPhase = "fetching"
+				m.fwSyncProgress = 0
+				m.availableFwError = ""
+				return m, tea.Batch(
+					syncFirmwareCacheCmd(),
+					m.spinner.Tick,
+				)
+			}
+		case "Flash Firmware":
+			if m.selectedFwPath == "" || m.fwFlashing {
+				return m, nil
+			}
+			if !m.connected || m.client == nil {
+				m.availableFwError = "Not connected to device"
+				return m, nil
+			}
+			m.fwFlashing = true
+			m.fwFlashPhase = "uploading"
+			m.fwFlashError = ""
+			m.statusMsg = ""
+			return m, tea.Batch(
+				flashFirmwareCmd(m.client, m.selectedFwPath),
+				m.spinner.Tick,
+			)
+		case "Clear Selection":
+			m.selectedFwVersion = ""
+			m.selectedFwPath = ""
+			m.selectedFwSize = 0
+			m.selectedFwSHA256 = ""
+			m.fwFlashError = ""
+			m.statusMsg = ""
+			// Reset cursor if it's beyond the new menu length
+			newMax := len(m.getFirmwareMenuItems()) - 1
+			if newMax < 0 {
+				newMax = 0
+			}
+			if m.cursor > newMax {
+				m.cursor = newMax
+			}
+			return m, nil
+		}
+
+	case ViewFirmwareSelect:
+		// Select a cached firmware version
+		if m.cursor < len(m.cachedFirmware) {
+			selected := m.cachedFirmware[m.cursor]
+			m.selectedFwVersion = selected.Version
+			m.selectedFwPath = selected.Path
+			m.selectedFwSize = selected.FileSize
+			m.selectedFwSHA256 = "" // We don't have this from cache entry
+			m.view = ViewFirmware
+			m.statusMsg = fmt.Sprintf("Selected %s", selected.Version)
+			return m, nil
+		}
 	}
 	return m, nil
 }
@@ -601,6 +989,13 @@ func (m Model) maxCursor() int {
 		return len(m.storeProfiles) - 1
 	case ViewModule:
 		return 1 // 2 menu items: Read Module, Read Snapshot
+	case ViewFirmware:
+		return len(m.getFirmwareMenuItems()) - 1
+	case ViewFirmwareSelect:
+		if len(m.cachedFirmware) == 0 {
+			return 0
+		}
+		return len(m.cachedFirmware) - 1
 	default:
 		return 0
 	}
@@ -625,6 +1020,15 @@ func (m Model) getSortedHashes() []string {
 
 // View renders the model.
 func (m Model) View() string {
+	// File picker overlay
+	if m.filePickerActive {
+		content := m.styles.Title.Render("Select Firmware File") + "\n" +
+			m.styles.Muted.Render("Directory: "+m.filepicker.CurrentDirectory) + "\n\n" +
+			m.filepicker.View() + "\n\n" +
+			m.styles.Muted.Render("↑/↓ navigate • Enter/→ select • ←/h parent dir • ESC cancel")
+		return m.styles.App.Render(content)
+	}
+
 	var content string
 
 	switch m.view {
@@ -638,6 +1042,10 @@ func (m Model) View() string {
 		content = m.viewStore()
 	case ViewStoreDetail:
 		content = m.viewStoreDetail()
+	case ViewFirmware:
+		content = m.viewFirmware()
+	case ViewFirmwareSelect:
+		content = m.viewFirmwareSelect()
 	default:
 		content = "Unknown view"
 	}
@@ -1100,6 +1508,234 @@ func (m Model) viewStoreDetail() string {
 	return b.String()
 }
 
+func (m Model) viewFirmware() string {
+	var b strings.Builder
+
+	// Title bar
+	b.WriteString(m.renderTitleBar("Firmware"))
+	b.WriteString("\n\n")
+
+	// Show sync progress if syncing
+	if m.fwSyncing {
+		b.WriteString(m.styles.Highlight.Render("Syncing Firmware Cache"))
+		b.WriteString("\n")
+		b.WriteString("  ")
+		b.WriteString(m.spinner.View())
+		if m.fwSyncCurrentVer != "" {
+			b.WriteString(fmt.Sprintf(" Downloading %s...", m.fwSyncCurrentVer))
+		} else {
+			b.WriteString(" Fetching available versions...")
+		}
+		b.WriteString("\n\n")
+	}
+
+	// Current firmware info
+	b.WriteString(m.styles.Highlight.Render("Current Version"))
+	b.WriteString("\n")
+
+	if m.connected && m.firmware != nil {
+		b.WriteString(m.renderField("Version", "v"+m.firmware.FWVersion))
+		b.WriteString(m.renderField("Hardware", fmt.Sprintf("v%d", m.firmware.HWVersion)))
+		if m.firmware.IsUpdating {
+			b.WriteString(m.renderField("Status", fmt.Sprintf("%s (%d%%)", m.firmware.Status, m.firmware.ProgressPercent)))
+		}
+	} else if m.connected {
+		b.WriteString("  ")
+		b.WriteString(m.spinner.View())
+		b.WriteString(" Loading...")
+		b.WriteString("\n")
+	} else {
+		b.WriteString(m.styles.Muted.Render("  Not connected"))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// Selected firmware (for flashing)
+	b.WriteString(m.styles.Highlight.Render("Selected Version"))
+	b.WriteString("\n")
+
+	if m.fwFlashing {
+		b.WriteString("  ")
+		b.WriteString(m.spinner.View())
+		b.WriteString(fmt.Sprintf(" %s...", m.fwFlashPhase))
+		b.WriteString("\n")
+	} else if m.fwFlashError != "" {
+		b.WriteString(m.styles.Error.Render("  Error: " + m.fwFlashError))
+		b.WriteString("\n")
+	} else if m.selectedFwVersion != "" {
+		b.WriteString(m.renderField("Version", m.selectedFwVersion))
+		b.WriteString(m.renderField("Size", humanizeBytesShort(m.selectedFwSize)))
+	} else {
+		b.WriteString(m.styles.Muted.Render("  None selected"))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// Cached firmware versions
+	b.WriteString(m.styles.Highlight.Render("Cached Firmware"))
+	b.WriteString("\n")
+
+	if len(m.cachedFirmware) > 0 {
+		for _, fw := range m.cachedFirmware {
+			marker := "  "
+			if fw.Version == m.selectedFwVersion {
+				marker = "● "
+			}
+			line := fmt.Sprintf("%s%s  (%s)", marker, fw.Version, humanizeBytesShort(fw.FileSize))
+			b.WriteString(line)
+			b.WriteString("\n")
+		}
+	} else if m.fwSyncing {
+		b.WriteString(m.styles.Muted.Render("  Syncing..."))
+		b.WriteString("\n")
+	} else {
+		b.WriteString(m.styles.Muted.Render("  No cached versions"))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+
+	// Build menu items dynamically
+	menuItems := m.getFirmwareMenuItems()
+
+	for i, item := range menuItems {
+		if i == m.cursor {
+			b.WriteString(m.styles.MenuItemSelected.Render("> " + item.title))
+		} else {
+			b.WriteString(m.styles.MenuItem.Render("  " + item.title))
+		}
+		b.WriteString("\n")
+		b.WriteString(m.styles.Muted.Render("    " + item.desc))
+		b.WriteString("\n\n")
+	}
+
+	// Error display
+	if m.availableFwError != "" && !m.fwSyncing {
+		b.WriteString(m.styles.Error.Render(m.availableFwError))
+		b.WriteString("\n")
+	}
+
+	// Status message
+	if m.statusMsg != "" {
+		b.WriteString(m.styles.Success.Render(m.statusMsg))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+// getFirmwareMenuItems returns the dynamic menu items for firmware view.
+func (m Model) getFirmwareMenuItems() []struct{ title, desc string } {
+	var items []struct{ title, desc string }
+
+	// If syncing, show minimal menu
+	if m.fwSyncing {
+		return items
+	}
+
+	// Cached version selection
+	if len(m.cachedFirmware) > 0 {
+		items = append(items, struct{ title, desc string }{
+			"Select from Cache",
+			fmt.Sprintf("Choose from %d cached versions", len(m.cachedFirmware)),
+		})
+	}
+
+	// File selection
+	items = append(items, struct{ title, desc string }{
+		"Select from File",
+		"Choose a local firmware file",
+	})
+
+	// Refresh
+	items = append(items, struct{ title, desc string }{
+		"Refresh Cache",
+		"Re-sync firmware from cloud",
+	})
+
+	// Flash button if a version is selected and connected
+	if m.selectedFwVersion != "" && !m.fwFlashing && m.connected {
+		items = append(items, struct{ title, desc string }{
+			"Flash Firmware",
+			fmt.Sprintf("Install %s to device", m.selectedFwVersion),
+		})
+	}
+
+	// Clear selection if selected
+	if m.selectedFwVersion != "" {
+		items = append(items, struct{ title, desc string }{
+			"Clear Selection",
+			"Deselect the current firmware",
+		})
+	}
+
+	return items
+}
+
+func (m Model) viewFirmwareSelect() string {
+	var b strings.Builder
+
+	// Title bar
+	b.WriteString(m.renderTitleBar("Select Cached Firmware"))
+	b.WriteString("\n\n")
+
+	if len(m.cachedFirmware) == 0 {
+		b.WriteString(m.styles.Muted.Render("No cached firmware versions"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Header
+	header := fmt.Sprintf("  %-12s  %-10s  %s", "VERSION", "SIZE", "DOWNLOADED")
+	b.WriteString(m.styles.Label.Render(header))
+	b.WriteString("\n\n")
+
+	// List all cached versions
+	for i, fw := range m.cachedFirmware {
+		line := fmt.Sprintf("%-12s  %-10s  %s",
+			fw.Version,
+			humanizeBytesShort(fw.FileSize),
+			fw.Downloaded.Format("2006-01-02 15:04"))
+
+		// Mark current version
+		if m.firmware != nil && fw.Version == "v"+m.firmware.FWVersion {
+			line += " (current)"
+		}
+
+		if i == m.cursor {
+			b.WriteString(m.styles.MenuItemSelected.Render("> " + line))
+		} else {
+			b.WriteString(m.styles.MenuItem.Render("  " + line))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(m.styles.Muted.Render("Press Enter to select, Esc to go back"))
+	b.WriteString("\n")
+
+	// Show status message if any
+	if m.statusMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(m.styles.Success.Render(m.statusMsg))
+		b.WriteString("\n")
+	}
+
+	return b.String()
+}
+
+func humanizeBytesShort(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
 func (m Model) renderField(label, value string) string {
 	return m.styles.Label.Render(label+":") + " " + m.styles.Value.Render(value) + "\n"
 }
@@ -1231,6 +1867,22 @@ func statusTickCmd() tea.Cmd {
 	})
 }
 
+// connectionCheckCmd returns a command that triggers periodic connection health checks.
+func connectionCheckCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return connectionCheckMsg(t)
+	})
+}
+
+// fetchAvailableFirmwareCmd fetches available firmware versions from the cloud.
+func fetchAvailableFirmwareCmd() tea.Cmd {
+	return func() tea.Msg {
+		client := firmware.NewManifestClient()
+		versions, err := client.GetAvailable(firmware.DefaultSFPWizardFilter())
+		return availableFirmwareMsg{versions: versions, err: err}
+	}
+}
+
 // readModuleCmd reads module EEPROM and saves to store.
 func readModuleCmd(client *api.Client, mac string) tea.Cmd {
 	return func() tea.Msg {
@@ -1324,4 +1976,130 @@ func moduleInfoTickCmd() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return moduleInfoTickMsg(t)
 	})
+}
+
+// importFirmwareFileCmd imports a local file into the firmware cache.
+func importFirmwareFileCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		cache, err := firmware.NewCache()
+		if err != nil {
+			return firmwareImportedMsg{err: err}
+		}
+		cachePath, sha256, size, err := cache.ImportFile(path)
+		if err != nil {
+			return firmwareImportedMsg{err: err}
+		}
+		// Extract version from path
+		base := filepath.Base(path)
+		version := strings.TrimSuffix(base, filepath.Ext(base))
+		return firmwareImportedMsg{
+			version: version,
+			path:    cachePath,
+			size:    size,
+			sha256:  sha256,
+		}
+	}
+}
+
+// downloadFirmwareCmd downloads a firmware version to the cache.
+func downloadFirmwareCmd(fw firmware.FirmwareVersion) tea.Cmd {
+	return func() tea.Msg {
+		cache, err := firmware.NewCache()
+		if err != nil {
+			return firmwareDownloadedMsg{err: err}
+		}
+		path, err := cache.Download(fw, nil)
+		if err != nil {
+			return firmwareDownloadedMsg{err: err}
+		}
+		return firmwareDownloadedMsg{
+			version: fw.Version,
+			path:    path,
+			size:    fw.FileSize,
+			sha256:  fw.SHA256,
+		}
+	}
+}
+
+// flashFirmwareCmd flashes firmware to the device.
+func flashFirmwareCmd(client *api.Client, path string) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return firmwareFlashCompleteMsg{err: fmt.Errorf("not connected")}
+		}
+
+		// Read firmware file
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return firmwareFlashCompleteMsg{err: fmt.Errorf("failed to read file: %w", err)}
+		}
+
+		// Use the client to update firmware (no progress callback for simplicity)
+		err = client.UpdateFirmware(data, nil)
+		if err != nil {
+			return firmwareFlashCompleteMsg{err: err}
+		}
+
+		return firmwareFlashCompleteMsg{
+			success: true,
+			message: "Firmware update complete! Device may reboot.",
+		}
+	}
+}
+
+// syncFirmwareCacheCmd fetches available firmware and downloads all missing versions.
+func syncFirmwareCacheCmd() tea.Cmd {
+	return func() tea.Msg {
+		// Create cache and manifest client
+		cache, err := firmware.NewCache()
+		if err != nil {
+			return firmwareSyncCompleteMsg{err: fmt.Errorf("cache error: %w", err)}
+		}
+
+		client := firmware.NewManifestClient()
+		versions, err := client.GetAvailable(firmware.DefaultSFPWizardFilter())
+		if err != nil {
+			return firmwareSyncCompleteMsg{err: fmt.Errorf("fetch error: %w", err)}
+		}
+
+		// Download missing versions
+		for i, v := range versions {
+			// Check if already cached
+			if cache.Has(v.Version, v.SHA256) {
+				continue
+			}
+
+			// Download with simple progress (no callback to TUI for now - would need channels)
+			_, err := cache.Download(v, nil)
+			if err != nil {
+				// Log but continue with other versions
+				continue
+			}
+
+			// Small delay between downloads
+			if i < len(versions)-1 {
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+
+		// Get final cached list
+		cached, _ := cache.List()
+
+		return firmwareSyncCompleteMsg{
+			versions: versions,
+			cached:   cached,
+		}
+	}
+}
+
+// refreshCachedFirmwareCmd just refreshes the cached firmware list without downloading.
+func refreshCachedFirmwareCmd() tea.Cmd {
+	return func() tea.Msg {
+		cache, err := firmware.NewCache()
+		if err != nil {
+			return cachedFirmwareMsg{}
+		}
+		cached, _ := cache.List()
+		return cachedFirmwareMsg{cached: cached}
+	}
 }

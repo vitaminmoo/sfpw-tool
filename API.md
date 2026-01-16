@@ -2,27 +2,31 @@
 
 This document describes the BLE API protocol for the UACC SFP Wizard device.
 
+Note that it is primarily maintained via LLM and certainly contains errors.
+
 ## Firmware Version Compatibility
 
 Tested firmware versions: **1.0.10**, **1.1.0**, **1.1.1**, **1.1.3**
 
-| Endpoint | 1.0.10 | 1.1.0 | 1.1.1+ | Notes |
-|----------|--------|-------|--------|-------|
-| `/api/1.0/{mac}` | ✓ | ✓ | ✓ | Device info |
-| `/api/version` | 404 | 404 | 404 | Not available on tested versions |
-| `/api/1.0/{mac}/stats` | ✓ | ✓ | ✓ | |
-| `/api/1.0/{mac}/settings` | ✓ | ✓ | ✓ | |
-| `/api/1.0/{mac}/bt` | ✓ | ✓ | ✓ | |
-| `/api/1.0/{mac}/fw` | ✓ | ✓ | ✓ | |
-| `/api/1.0/{mac}/xsfp/module/details` | 404 | ✓ | ✓ | **New in 1.1.0**, adds `type` field in 1.1.1 |
-| `/api/1.0/{mac}/xsfp/sync/start` | ✓ | ✓ | ✓ | Returns 417 if no module; adds `type` field in 1.1.1 |
-| `/api/1.0/{mac}/xsfp/module/start` | ? | ✓ | ✓ | Untested on 1.0.10 |
-| `/api/1.0/{mac}/sif/*` | ✓ | ✓ | ✓ | SIF archive operations |
+| Endpoint                             | 1.0.10 | 1.1.0 | 1.1.1+ | Notes                                                |
+| ------------------------------------ | ------ | ----- | ------ | ---------------------------------------------------- |
+| `/api/1.0/{mac}`                     | ✓      | ✓     | ✓      | Device info                                          |
+| `/api/version`                       | 404    | 404   | 404    | Not available on tested versions                     |
+| `/api/1.0/{mac}/stats`               | ✓      | ✓     | ✓      |                                                      |
+| `/api/1.0/{mac}/settings`            | ✓      | ✓     | ✓      |                                                      |
+| `/api/1.0/{mac}/bt`                  | ✓      | ✓     | ✓      |                                                      |
+| `/api/1.0/{mac}/fw`                  | ✓      | ✓     | ✓      |                                                      |
+| `/api/1.0/{mac}/xsfp/module/details` | 404    | ✓     | ✓      | **New in 1.1.0**, adds `type` field in 1.1.1         |
+| `/api/1.0/{mac}/xsfp/sync/start`     | ✓      | ✓     | ✓      | Returns 417 if no module; adds `type` field in 1.1.1 |
+| `/api/1.0/{mac}/xsfp/module/start`   | ?      | ✓     | ✓      | Untested on 1.0.10                                   |
+| `/api/1.0/{mac}/sif/*`               | ✓      | ✓     | ✓      | SIF archive operations                               |
 
 **Key changes in 1.1.0:**
+
 - Added `/xsfp/module/details` endpoint for quick module info without full EEPROM read
 
 **Key changes in 1.1.1:**
+
 - Added `type` field ("sfp" or "qsfp") to `/xsfp/module/details` and `/xsfp/sync/start` responses
 
 ---
@@ -33,11 +37,11 @@ The protocol uses **JSON messages wrapped in a binary envelope over BLE GATT**, 
 
 ### BLE Characteristics
 
-| Service UUID | Characteristic UUID | Handle | Purpose |
-|-------------|---------------------|--------|---------|
-| 8E60F02E-F699-4865-B83F-F40501752184 | 9280F26C-A56F-43EA-B769-D5D732E1AC67 | 0x10 | Write requests |
-| 8E60F02E-F699-4865-B83F-F40501752184 | DC272A22-43F2-416B-8FA5-63A071542FAC | 0x11 | Device info (read) |
-| 8E60F02E-F699-4865-B83F-F40501752184 | D587C47F-AC6E-4388-A31C-E6CD380BA043 | 0x15 | **API responses (notify)** |
+| Service UUID                         | Characteristic UUID                  | Handle | Purpose                    |
+| ------------------------------------ | ------------------------------------ | ------ | -------------------------- |
+| 8E60F02E-F699-4865-B83F-F40501752184 | 9280F26C-A56F-43EA-B769-D5D732E1AC67 | 0x10   | Write requests             |
+| 8E60F02E-F699-4865-B83F-F40501752184 | DC272A22-43F2-416B-8FA5-63A071542FAC | 0x11   | Device info (read)         |
+| 8E60F02E-F699-4865-B83F-F40501752184 | D587C47F-AC6E-4388-A31C-E6CD380BA043 | 0x15   | **API responses (notify)** |
 
 **Important:** Subscribe to `D587C47F` for API responses, NOT `DC272A22`.
 
@@ -75,6 +79,7 @@ Messages use a binary envelope with an outer header, header section (JSON envelo
   - Always check for zlib magic byte `0x78` before decompressing
 
 **Zlib magic bytes** (first byte is always `0x78`, second varies by compression level):
+
 - `78 01` - no/low compression
 - `78 5e` - fast compression
 - `78 9c` - default compression
@@ -85,6 +90,7 @@ Messages use a binary envelope with an outer header, header section (JSON envelo
 ## JSON Envelope Format
 
 ### Request Envelope
+
 ```json
 {
   "type": "httpRequest",
@@ -97,6 +103,7 @@ Messages use a binary envelope with an outer header, header section (JSON envelo
 ```
 
 ### Response Envelope
+
 ```json
 {
   "type": "httpResponse",
@@ -111,19 +118,20 @@ The response body is in the **body section**, not in the JSON envelope.
 
 ### Key Fields
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `type` | string | `httpRequest` or `httpResponse` |
-| `id` | string | Request ID for correlation (incrementing counter in UUID format) |
-| `timestamp` | number | Unix timestamp in milliseconds |
-| `method` | string | HTTP method: `GET` or `POST` (request only) |
-| `path` | string | API endpoint path (request only) |
-| `statusCode` | number | HTTP status code (response only) |
-| `headers` | object | Always empty `{}` |
+| Field        | Type   | Description                                                      |
+| ------------ | ------ | ---------------------------------------------------------------- |
+| `type`       | string | `httpRequest` or `httpResponse`                                  |
+| `id`         | string | Request ID for correlation (incrementing counter in UUID format) |
+| `timestamp`  | number | Unix timestamp in milliseconds                                   |
+| `method`     | string | HTTP method: `GET` or `POST` (request only)                      |
+| `path`       | string | API endpoint path (request only)                                 |
+| `statusCode` | number | HTTP status code (response only)                                 |
+| `headers`    | object | Always empty `{}`                                                |
 
 ### ID and Sequence Number Format
 
 The ID is a zero-padded incrementing hex counter in UUID format:
+
 - `00000000-0000-0000-0000-000000000001`
 - `00000000-0000-0000-0000-000000000002`
 - etc.
@@ -132,13 +140,13 @@ The **outer header bytes 2-3** contain the same hex sequence number (e.g., `00 0
 
 ### Status Codes
 
-| Code | Meaning |
-|------|---------|
-| 200 | Success |
-| 304 | Not Modified |
-| 400 | Bad Request |
-| 404 | Not Found |
-| 500 | Internal Server Error |
+| Code | Meaning               |
+| ---- | --------------------- |
+| 200  | Success               |
+| 304  | Not Modified          |
+| 400  | Bad Request           |
+| 404  | Not Found             |
+| 500  | Internal Server Error |
 
 ---
 
@@ -161,6 +169,7 @@ Returns firmware and API version info.
 **Note:** This endpoint returns 404 on firmware versions 1.0.10 and 1.1.0. Availability on other versions is unknown.
 
 **Response:**
+
 ```json
 {
   "fwv": "1.1.1",
@@ -175,6 +184,7 @@ Returns firmware and API version info.
 Returns device info.
 
 **Response:**
+
 ```json
 {
   "id": "DEADBEEFCAFE",
@@ -194,6 +204,7 @@ Returns device info.
 Returns device statistics including battery level.
 
 **Response:**
+
 ```json
 {
   "battery": 71,
@@ -211,6 +222,7 @@ Returns device statistics including battery level.
 Returns device settings.
 
 **Response:**
+
 ```json
 {
   "ch": "release",
@@ -232,6 +244,7 @@ Returns device settings.
 Returns Bluetooth parameters.
 
 **Response:**
+
 ```json
 {
   "btMode": "CUSTOM",
@@ -250,6 +263,7 @@ Returns Bluetooth parameters.
 Returns firmware status.
 
 **Response:**
+
 ```json
 {
   "hwv": 8,
@@ -267,12 +281,12 @@ Returns firmware status.
 
 The SIF (SFP Interface) protocol is used to read and write SFP module EEPROM data.
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/1.0/{mac}/sif/start` | Start SIF read operation |
-| GET | `/api/1.0/{mac}/sif/info/` | SIF operation status |
-| GET | `/api/1.0/{mac}/sif/data/` | Read SIF data chunk |
-| POST | `/api/1.0/{mac}/sif/abort` | Abort SIF operation |
+| Method | Path                       | Description              |
+| ------ | -------------------------- | ------------------------ |
+| POST   | `/api/1.0/{mac}/sif/start` | Start SIF read operation |
+| GET    | `/api/1.0/{mac}/sif/info/` | SIF operation status     |
+| GET    | `/api/1.0/{mac}/sif/data/` | Read SIF data chunk      |
+| POST   | `/api/1.0/{mac}/sif/abort` | Abort SIF operation      |
 
 **Note:** The `/sif/info/` and `/sif/data/` paths require a trailing slash.
 
@@ -283,6 +297,7 @@ Initiates an SIF read operation. Must be called before reading data.
 **Request body:** None (empty)
 
 **Response:**
+
 ```json
 {
   "status": "ready",
@@ -292,18 +307,19 @@ Initiates an SIF read operation. Must be called before reading data.
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `status` | "ready" when initialized |
-| `offset` | Starting offset (always 0) |
-| `chunk` | Maximum chunk size for data requests |
-| `size` | Total EEPROM size in bytes (512 for SFP A0h+A2h pages) |
+| Field    | Description                                            |
+| -------- | ------------------------------------------------------ |
+| `status` | "ready" when initialized                               |
+| `offset` | Starting offset (always 0)                             |
+| `chunk`  | Maximum chunk size for data requests                   |
+| `size`   | Total EEPROM size in bytes (512 for SFP A0h+A2h pages) |
 
 #### GET `/api/1.0/{mac}/sif/data/`
 
 Reads a chunk of EEPROM data. Call in a loop until all data is retrieved.
 
 **Request body:**
+
 ```json
 {
   "status": "continue",
@@ -312,11 +328,11 @@ Reads a chunk of EEPROM data. Call in a loop until all data is retrieved.
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `status` | Must be "continue" |
-| `offset` | Byte offset to read from |
-| `chunk` | Number of bytes to read (max = chunk size from start response) |
+| Field    | Description                                                    |
+| -------- | -------------------------------------------------------------- |
+| `status` | Must be "continue"                                             |
+| `offset` | Byte offset to read from                                       |
+| `chunk`  | Number of bytes to read (max = chunk size from start response) |
 
 **Response body:** Raw binary EEPROM data (not JSON).
 
@@ -329,6 +345,7 @@ Returns the current SIF operation status.
 **Request body:** None (empty)
 
 **Response:**
+
 ```json
 {
   "status": "finished",
@@ -336,12 +353,13 @@ Returns the current SIF operation status.
 }
 ```
 
-| Field | Description |
-|-------|-------------|
+| Field    | Description               |
+| -------- | ------------------------- |
 | `status` | Status string (see below) |
-| `offset` | Current read offset |
+| `offset` | Current read offset       |
 
 **Status values:**
+
 - `ready` - Initialized, ready to read data
 - `continue` - Read in progress, more data available
 - `inprogress` - Actively reading
@@ -355,6 +373,7 @@ Returns the current SIF operation status.
 3. **GET `/sif/info/`** - Verify completion (optional)
 
 Example read sequence:
+
 ```
 POST /sif/start           → {"status":"ready","offset":0,"chunk":1024,"size":512}
 GET  /sif/data/ (0,512)   → [512 bytes of raw EEPROM data]
@@ -370,6 +389,7 @@ SIF data responses can be large (512+ bytes) and exceed the BLE MTU. The device 
 3. Accumulate all fragments until `total_received >= total_length`
 
 Example: A 600-byte response might arrive as:
+
 - Notification 1: 244 bytes (header + start of data)
 - Notification 2: 244 bytes (continuation)
 - Notification 3: 112 bytes (final fragment)
@@ -378,16 +398,17 @@ Example: A 600-byte response might arrive as:
 
 The SIF data is returned as a **tar archive** containing:
 
-| File | Size | Description |
-|------|------|-------------|
-| `syslog` | ~5-10KB | Device logs (grows over time, clears on reboot) |
-| `sfp_primary.bin` | 512 | SFP module read via device screen (physical button) |
-| `sfp_secondary.bin` | 512 | SFP module read via API (`/sif/start`) |
-| `qsfp_primary.bin` | 640 | QSFP module read via device screen (0xff if empty) |
-| `qsfp_secondary.bin` | 640 | QSFP module read via API |
-| `{PartNumber}.bin` | 512/640 | Module database entries (keyed by S/N, named by PN suffix) |
+| File                 | Size    | Description                                                |
+| -------------------- | ------- | ---------------------------------------------------------- |
+| `syslog`             | ~5-10KB | Device logs (grows over time, clears on reboot)            |
+| `sfp_primary.bin`    | 512     | SFP module read via device screen (physical button)        |
+| `sfp_secondary.bin`  | 512     | SFP module read via API (`/sif/start`)                     |
+| `qsfp_primary.bin`   | 640     | QSFP module read via device screen (0xff if empty)         |
+| `qsfp_secondary.bin` | 640     | QSFP module read via API                                   |
+| `{PartNumber}.bin`   | 512/640 | Module database entries (keyed by S/N, named by PN suffix) |
 
 **Notes:**
+
 - `primary` = read initiated via device screen, `secondary` = read initiated via API
 - The named `{PartNumber}.bin` files persist across reboots (stored in flash)
 - Database keys by **serial number**, with 2 slots per unique module (screen + API)
@@ -409,12 +430,12 @@ Reboots the device. The BLE connection will drop during reboot.
 
 ### Other Endpoints
 
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/api/1.0/{mac}/name` | Set device name |
-| POST | `/api/1.0/{mac}/fw/start` | Start firmware update |
-| POST | `/api/1.0/{mac}/fw/data` | Send firmware chunk |
-| POST | `/api/1.0/{mac}/fw/abort` | Abort firmware update |
+| Method | Path                      | Description           |
+| ------ | ------------------------- | --------------------- |
+| POST   | `/api/1.0/{mac}/name`     | Set device name       |
+| POST   | `/api/1.0/{mac}/fw/start` | Start firmware update |
+| POST   | `/api/1.0/{mac}/fw/data`  | Send firmware chunk   |
+| POST   | `/api/1.0/{mac}/fw/abort` | Abort firmware update |
 
 ---
 
@@ -423,21 +444,22 @@ Reboots the device. The BLE connection will drop during reboot.
 The XSFP protocol provides direct read/write access to SFP module EEPROM "snapshots". Unlike the SIF protocol which returns a tar archive, XSFP works with raw binary data and supports **writing** to module EEPROM.
 
 **Version Notes:**
+
 - `/xsfp/module/details` is **new in 1.1.0** (returns 404 on 1.0.10)
 - Other XSFP endpoints work on both 1.0.10 and 1.1.0
 - All XSFP read operations return 417 (Expectation Failed) if no module is inserted
 
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/1.0/{mac}/xsfp/sync/start` | Get current snapshot info |
-| POST | `/api/1.0/{mac}/xsfp/sync/start` | Initialize write transfer |
-| GET | `/api/1.0/{mac}/xsfp/sync/data` | Read snapshot data |
-| POST | `/api/1.0/{mac}/xsfp/sync/data` | Write snapshot data chunk |
-| POST | `/api/1.0/{mac}/xsfp/sync/cancel` | Cancel transfer |
-| GET | `/api/1.0/{mac}/xsfp/module/start` | Start module read |
-| GET | `/api/1.0/{mac}/xsfp/module/data` | Read module data |
-| GET | `/api/1.0/{mac}/xsfp/module/details` | Get module details |
-| POST | `/api/1.0/{mac}/xsfp/recover` | Recovery operation |
+| Method | Path                                 | Description               |
+| ------ | ------------------------------------ | ------------------------- |
+| GET    | `/api/1.0/{mac}/xsfp/sync/start`     | Get current snapshot info |
+| POST   | `/api/1.0/{mac}/xsfp/sync/start`     | Initialize write transfer |
+| GET    | `/api/1.0/{mac}/xsfp/sync/data`      | Read snapshot data        |
+| POST   | `/api/1.0/{mac}/xsfp/sync/data`      | Write snapshot data chunk |
+| POST   | `/api/1.0/{mac}/xsfp/sync/cancel`    | Cancel transfer           |
+| GET    | `/api/1.0/{mac}/xsfp/module/start`   | Start module read         |
+| GET    | `/api/1.0/{mac}/xsfp/module/data`    | Read module data          |
+| GET    | `/api/1.0/{mac}/xsfp/module/details` | Get module details        |
+| POST   | `/api/1.0/{mac}/xsfp/recover`        | Recovery operation        |
 
 #### GET `/api/1.0/{mac}/xsfp/module/details`
 
@@ -446,6 +468,7 @@ Returns details about the currently inserted SFP module without reading the full
 **Requires:** Firmware 1.1.0+
 
 **Response:**
+
 ```json
 {
   "partNumber": "SFP-10G-T",
@@ -457,13 +480,13 @@ Returns details about the currently inserted SFP module without reading the full
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `partNumber` | Module part number |
-| `rev` | Revision |
-| `vendor` | Vendor name/ID |
-| `sn` | Serial number |
-| `type` | Module type: "sfp" or "qsfp" (1.1.1+) |
+| Field        | Description                                                 |
+| ------------ | ----------------------------------------------------------- |
+| `partNumber` | Module part number                                          |
+| `rev`        | Revision                                                    |
+| `vendor`     | Vendor name/ID                                              |
+| `sn`         | Serial number                                               |
+| `type`       | Module type: "sfp" or "qsfp" (1.1.1+)                       |
 | `compliance` | Transceiver compliance (e.g., "10G BASE-SR", "10G BASE-LR") |
 
 **Note:** Returns 404 if no module is inserted.
@@ -475,6 +498,7 @@ Returns information about the current snapshot buffer contents.
 **Requires:** Firmware 1.1.0+
 
 **Response:**
+
 ```json
 {
   "partNumber": "AXB32-192-20/GR",
@@ -486,32 +510,34 @@ Returns information about the current snapshot buffer contents.
 }
 ```
 
-| Field | Description |
-|-------|-------------|
-| `partNumber` | Part number of module in snapshot |
-| `vendor` | Vendor of module in snapshot |
-| `sn` | Serial number of module in snapshot |
-| `type` | Module type: "sfp" or "qsfp" (1.1.1+) |
-| `chunk` | Maximum chunk size for data transfer |
-| `size` | Total size of snapshot data in bytes |
+| Field        | Description                           |
+| ------------ | ------------------------------------- |
+| `partNumber` | Part number of module in snapshot     |
+| `vendor`     | Vendor of module in snapshot          |
+| `sn`         | Serial number of module in snapshot   |
+| `type`       | Module type: "sfp" or "qsfp" (1.1.1+) |
+| `chunk`      | Maximum chunk size for data transfer  |
+| `size`       | Total size of snapshot data in bytes  |
 
 **Note:** Returns 417 (Expectation Failed) if no module is inserted.
 
 #### Snapshot Sizes
 
-| Size | Module Type |
-|------|-------------|
+| Size              | Module Type                  |
+| ----------------- | ---------------------------- |
 | 512 bytes (0x200) | SFP module (A0h + A2h pages) |
-| 640 bytes (0x280) | QSFP module |
+| 640 bytes (0x280) | QSFP module                  |
 
 #### XSFP Write Flow
 
 To write EEPROM data to an SFP module:
 
 1. **POST `/xsfp/sync/start`** - Initialize transfer with expected size
+
    ```json
-   {"size": 512}
+   { "size": 512 }
    ```
+
    Response confirms the transfer is ready.
 
 2. **POST `/xsfp/sync/data`** - Send binary data chunks
@@ -532,20 +558,21 @@ To read current module EEPROM:
 
 #### Error Handling
 
-| Status Code | Meaning |
-|-------------|---------|
-| 200 | Success |
-| 400 | Invalid request/argument |
-| 500 | Internal error / allocation failure |
-| 0x130 (304) | Invalid snapshot data |
-| 0x19d (413) | Data size mismatch |
-| 0x1a1 (417) | Unexpected snapshot size |
+| Status Code | Meaning                             |
+| ----------- | ----------------------------------- |
+| 200         | Success                             |
+| 400         | Invalid request/argument            |
+| 500         | Internal error / allocation failure |
+| 0x130 (304) | Invalid snapshot data               |
+| 0x19d (413) | Data size mismatch                  |
+| 0x1a1 (417) | Unexpected snapshot size            |
 
 #### POST `/api/1.0/{mac}/xsfp/recover`
 
 Restores a module's EEPROM from a previously saved "golden snapshot" in the device database.
 
 **Request body:**
+
 ```json
 {
   "sn": "SERIALNUMBER",
@@ -553,21 +580,24 @@ Restores a module's EEPROM from a previously saved "golden snapshot" in the devi
 }
 ```
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `sn` | string | Yes | Serial number of the module to recover |
-| `wavelength` | number | No | Override wavelength value in restored snapshot |
+| Field        | Type   | Required | Description                                    |
+| ------------ | ------ | -------- | ---------------------------------------------- |
+| `sn`         | string | Yes      | Serial number of the module to recover         |
+| `wavelength` | number | No       | Override wavelength value in restored snapshot |
 
 **Response:**
+
 - **200**: Success - snapshot restored, fires `xsfp_load_completed` event internally
 - **404**: Golden snapshot not found for the given serial number
 
 **Error message (404):**
+
 ```
 Golden snapshot appears to be invalid or not found for sn:'SERIALNUMBER'
 ```
 
 **Notes:**
+
 - Looks up the golden snapshot by serial number in the device's persistent database
 - Validates snapshot size (512 for SFP, 640 for QSFP)
 - If `wavelength` is provided, overrides the wavelength field in the restored data
@@ -586,12 +616,12 @@ The device maintains a persistent database of module snapshots on its internal f
 
 ### Database Structure
 
-| Aspect | Details |
-|--------|---------|
-| **Key** | Module serial number |
-| **Filename** | Part number suffix (e.g., `SFP-10G-SR.bin`) |
-| **File size** | 512 bytes (SFP) or 640 bytes (QSFP) |
-| **Slots per module** | 2 (one for screen read, one for API read) |
+| Aspect               | Details                                     |
+| -------------------- | ------------------------------------------- |
+| **Key**              | Module serial number                        |
+| **Filename**         | Part number suffix (e.g., `SFP-10G-SR.bin`) |
+| **File size**        | 512 bytes (SFP) or 640 bytes (QSFP)         |
+| **Slots per module** | 2 (one for screen read, one for API read)   |
 
 ### Storage Limits
 
@@ -602,16 +632,168 @@ The device maintains a persistent database of module snapshots on its internal f
 
 ### Database Operations
 
-| Operation | Method |
-|-----------|--------|
-| **Save** | Automatic when module is read (via screen or API) |
-| **Retrieve** | Via `/xsfp/recover` endpoint with serial number |
-| **List** | Via SIF archive - database files included in tar |
-| **Clear** | Device reboot clears runtime cache; flash persists |
+| Operation    | Method                                             |
+| ------------ | -------------------------------------------------- |
+| **Save**     | Automatic when module is read (via screen or API)  |
+| **Retrieve** | Via `/xsfp/recover` endpoint with serial number    |
+| **List**     | Via SIF archive - database files included in tar   |
+| **Clear**    | Device reboot clears runtime cache; flash persists |
 
 ### File Naming
 
 Multiple modules can share the same filename if they have identical part numbers. The database internally keys by serial number, so modules with the same part number but different serial numbers are stored separately despite having the same filename in the SIF archive export.
+
+---
+
+## SFP Password Database
+
+The firmware contains an embedded password database used to unlock locked SFP/QSFP modules. This database maps part numbers to their unlock passwords.
+
+### Database Format
+
+The password database is stored in the DROM segment of the ESP32 firmware image. The entry structure changed between firmware versions:
+
+| Firmware     | Entry Size | Fields                                                                |
+| ------------ | ---------- | --------------------------------------------------------------------- |
+| 1.0.x, 1.1.0 | 20 bytes   | read_only, part_number\*, locked, password[4], flags[3], cable_length |
+| 1.1.1+       | 16 bytes   | read_only, part_number\*, locked, password[4], flags[3]               |
+
+**Entry Structure (1.0.x, 1.1.0 - 20 bytes):**
+
+```
+Offset  Size  Field
+0x00    4     read_only (uint32) - Skip if non-zero
+0x04    4     part_number (char*) - Pointer to null-terminated string
+0x08    1     locked (bool) - Module requires unlock
+0x09    4     password[4] - 4-byte unlock password
+0x0D    3     flags[3] - Module flags
+0x10    4     cable_length (int32) - Cable length or reach in meters
+```
+
+The `cable_length` field served a dual purpose in older firmware - the password database was also used as a module metadata lookup table:
+
+- **DAC/AOC cables**: Physical cable length (e.g., 5M cable → 5)
+- **Optical modules**: Maximum transmission reach (e.g., LR → 10000 for 10km)
+
+**Entry Structure (1.1.1+ - 16 bytes):**
+
+```
+Offset  Size  Field
+0x00    4     read_only (uint32) - Skip if non-zero
+0x04    4     part_number (char*) - Pointer to null-terminated string
+0x08    1     locked (bool) - Module requires unlock
+0x09    4     password[4] - 4-byte unlock password
+0x0D    3     flags[3] - Module flags
+```
+
+In 1.1.1+, the `cable_length` field was removed, separating the password database from module metadata. Cable length is likely now parsed from the part number string or stored elsewhere.
+
+The database is terminated by an entry with a NULL `part_number` pointer.
+
+### Flags Field
+
+The `flags[0]` byte is a bitmask indicating which EEPROM pages can be written after unlock:
+
+| Bit | Value | Page          | Description                              |
+| --- | ----- | ------------- | ---------------------------------------- |
+| 0   | 0x01  | A0h / Lower   | Basic identity page (all modules)        |
+| 1   | 0x02  | A2h / Upper 1 | SFP diagnostic page or QSFP upper page 1 |
+| 2   | 0x04  | Upper 2       | QSFP upper page 2                        |
+| 3   | 0x08  | Upper 3       | QSFP upper page 3 (thresholds)           |
+
+**Common flag values:**
+
+| Value | Binary | Meaning                       |
+| ----- | ------ | ----------------------------- |
+| 0x01  | `0001` | Lower page only (minimal)     |
+| 0x03  | `0011` | SFP modules (A0h + A2h)       |
+| 0x0D  | `1101` | Some QSFP (lower + upper 2,3) |
+| 0x0F  | `1111` | Full QSFP (all 4 pages)       |
+
+The firmware checks these flags before writing to a property - if the corresponding bit isn't set, the write is skipped. Properties like `pu0vn` (vendor name), `pu3txhat` (TX high alarm threshold) reference specific pages.
+
+`flags[1]` and `flags[2]` are less commonly used and their meaning is not fully understood.
+
+### Password Lookup Algorithm (1.0.10)
+
+1. Look up module by part number string using `strcmp` (exact match, first match wins)
+2. If not found, try alternate part number (vendor PN)
+3. If still not found, use default entry (last entry with NULL part_number)
+4. If entry is `read_only`, skip unlock attempt
+5. If entry is not `locked`, skip unlock (module doesn't need password)
+6. Send 4-byte password to module's password register (A2h offset 0x7B)
+7. If unlock fails, fallback: collect ALL unique passwords from entire database and try each
+
+**Key functions:**
+
+| Function                               | Purpose                                                 |
+| -------------------------------------- | ------------------------------------------------------- |
+| `sfp_password_db_lookup_by_partnumber` | strcmp lookup, returns first match                      |
+| `sfp_collect_unique_passwords`         | Collects all unique passwords from entire DB (fallback) |
+
+### Password Lookup Algorithm (1.1.3)
+
+1. Collect ALL database entries matching the part number using `strcmp`
+2. If no matches, try alternate part number (vendor PN)
+3. If still no matches, use default entry
+4. Deduplicate collected entries by password value (4-byte comparison)
+5. Try each unique password in sequence until unlock succeeds
+
+**Key functions:**
+
+| Function       | Address    | Purpose                                            |
+| -------------- | ---------- | -------------------------------------------------- |
+| `FUN_420158cc` | 0x420158cc | strcmp lookup, returns first match                 |
+| `FUN_420158ec` | 0x420158ec | Collects all entries matching part number (max 20) |
+| `FUN_42015934` | 0x42015934 | Deduplicates by password value                     |
+
+**Key difference from 1.0.10:** The fallback mechanism changed. In 1.0.10, if the first-match password fails, the device tries ALL unique passwords from the entire database. In 1.1.3, it only tries passwords from entries that match the module's part number.
+
+### Changes in 1.1.1+
+
+Starting in 1.1.1, some modules have **multiple database entries** with different passwords. This allows the device to try alternate passwords if the first one fails:
+
+| Part Number | 1.0.10 Passwords | 1.1.1+ Passwords             |
+| ----------- | ---------------- | ---------------------------- |
+| OM-MM-10G-D | `00 00 10 11`    | `00 00 10 11`, `63 73 77 77` |
+| OM-SM-10G-D | `00 00 10 11`    | `63 73 77 77`, `00 00 10 11` |
+| OM-SFP28-SR | `00 00 10 11`    | `00 00 10 11`, `63 73 77 77` |
+| OM-SFP28-LR | `53 46 50 58`    | `53 46 50 58`, `63 73 77 77` |
+
+### Database Summary by Firmware Version
+
+| Firmware | Entries | Entry Size | Unique Passwords |
+| -------- | ------- | ---------- | ---------------- |
+| 1.0.10   | 54      | 20 bytes   | 5                |
+| 1.1.0    | 54      | 20 bytes   | 5                |
+| 1.1.1    | 58      | 16 bytes   | 6                |
+| 1.1.3    | 59      | 16 bytes   | 6                |
+
+### Known Passwords
+
+| Password (Hex) | Password (ASCII) | Used By                                    | Firmware |
+| -------------- | ---------------- | ------------------------------------------ | -------- |
+| `00 00 10 11`  | -                | Most AOC/Uplink/OM modules (default)       | All      |
+| `78 56 34 12`  | -                | DAC-SFP28-3M, OM-SFP10-12xx to 15xx (DWDM) | All      |
+| `53 46 50 58`  | "SFPX"           | OM-SFP28-LR                                | All      |
+| `80 81 82 83`  | -                | OM-QSFP28-LR4, OM-QSFP28-PSM4              | All      |
+| `51 53 46 50`  | "QSFP"           | OM-QSFP28-SR4                              | All      |
+| `63 73 77 77`  | "csww"           | Alternate for OM-MM/SM/SFP28 modules       | 1.1.1+   |
+
+### Extracting the Password Database
+
+Use `sfpw fw passdb` to extract the password database from a firmware image:
+
+```bash
+# Extract and display password database
+sfpw fw passdb firmware.bin
+
+# Output as JSON
+sfpw fw passdb -j firmware.bin
+
+# Search for specific part number
+sfpw fw passdb -s "OM-SFP28" firmware.bin
+```
 
 ---
 

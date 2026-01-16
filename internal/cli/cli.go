@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"sfpw-tool/internal/ble"
 	"sfpw-tool/internal/commands"
 	"sfpw-tool/internal/config"
+	"sfpw-tool/internal/firmware"
 	"sfpw-tool/internal/store"
 	"sfpw-tool/internal/tui"
 )
@@ -219,9 +221,13 @@ func (c *SnapshotWriteCmd) Run(globals *CLI) error {
 // --- Firmware Commands ---
 
 type FwCmd struct {
-	Status FwStatusCmd `cmd:"" help:"Get detailed firmware status"`
-	Update FwUpdateCmd `cmd:"" help:"Upload and install firmware from file"`
-	Abort  FwAbortCmd  `cmd:"" help:"Abort an in-progress firmware update"`
+	Status       FwStatusCmd       `cmd:"" help:"Get detailed firmware status"`
+	Update       FwUpdateCmd       `cmd:"" help:"Upload and install firmware from file"`
+	Abort        FwAbortCmd        `cmd:"" help:"Abort an in-progress firmware update"`
+	GetAvailable FwGetAvailableCmd `cmd:"" name:"get-available" help:"List available firmware versions from cloud"`
+	Download     FwDownloadCmd     `cmd:"" help:"Download firmware to local cache"`
+	Cache        FwCacheCmd        `cmd:"" help:"Manage firmware cache"`
+	Passdb       FwPassdbCmd       `cmd:"" help:"Extract password database from firmware image"`
 }
 
 type FwStatusCmd struct{}
@@ -254,6 +260,402 @@ func (c *FwAbortCmd) Run(globals *CLI) error {
 	defer device.Disconnect()
 	commands.FirmwareAbort(device)
 	return nil
+}
+
+type FwGetAvailableCmd struct {
+	Channel  string `help:"Filter by channel" default:"release"`
+	Platform string `help:"Filter by platform" default:"ESP32"`
+	Product  string `help:"Filter by product" default:"SFP-Wizard"`
+	JSON     bool   `help:"Output as JSON" short:"j"`
+}
+
+func (c *FwGetAvailableCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+
+	client := firmware.NewManifestClient()
+	filter := firmware.ManifestFilter{
+		Channel:  c.Channel,
+		Platform: c.Platform,
+		Product:  c.Product,
+	}
+
+	versions, err := client.GetAvailable(filter)
+	if err != nil {
+		return fmt.Errorf("failed to fetch available firmware: %w", err)
+	}
+
+	if len(versions) == 0 {
+		fmt.Println("No firmware versions found matching the filter.")
+		return nil
+	}
+
+	if c.JSON {
+		data, _ := json.MarshalIndent(versions, "", "  ")
+		fmt.Println(string(data))
+		return nil
+	}
+
+	// Table output
+	fmt.Printf("Available firmware versions (%d found):\n\n", len(versions))
+	fmt.Printf("  %-12s  %-12s  %-10s  %s\n", "VERSION", "DATE", "SIZE", "SHA256")
+	fmt.Println(strings.Repeat("-", 70))
+	for _, v := range versions {
+		sha := v.SHA256
+		if len(sha) > 16 {
+			sha = sha[:16] + "..."
+		}
+		fmt.Printf("  %-12s  %-12s  %-10s  %s\n",
+			v.Version,
+			v.Created.Format("2006-01-02"),
+			humanizeBytes(v.FileSize),
+			sha)
+	}
+
+	return nil
+}
+
+type FwDownloadCmd struct {
+	Version string `arg:"" optional:"" help:"Firmware version to download (default: latest)"`
+}
+
+func (c *FwDownloadCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+
+	manifest := firmware.NewManifestClient()
+	versions, err := manifest.GetAvailable(firmware.DefaultSFPWizardFilter())
+	if err != nil {
+		return err
+	}
+
+	if len(versions) == 0 {
+		return fmt.Errorf("no firmware versions available")
+	}
+
+	var target firmware.FirmwareVersion
+	if c.Version == "" {
+		target = versions[0] // Latest
+		fmt.Printf("Downloading latest version: %s\n", target.Version)
+	} else {
+		for _, v := range versions {
+			if v.Version == c.Version || v.Version == "v"+c.Version {
+				target = v
+				break
+			}
+		}
+		if target.Version == "" {
+			return fmt.Errorf("version %s not found", c.Version)
+		}
+	}
+
+	cache, err := firmware.NewCache()
+	if err != nil {
+		return err
+	}
+
+	progressBar := &CLIProgressBar{width: 40}
+	path, err := cache.Download(target, func(current, total int64, desc string) {
+		progressBar.Update(current, total, desc)
+	})
+	progressBar.Complete()
+
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Firmware cached at: %s\n", path)
+	return nil
+}
+
+type FwCacheCmd struct {
+	List  FwCacheListCmd  `cmd:"" help:"List cached firmware files"`
+	Clear FwCacheClearCmd `cmd:"" help:"Clear firmware cache"`
+	Path  FwCachePathCmd  `cmd:"" help:"Show cache directory path"`
+}
+
+type FwCacheListCmd struct{}
+
+func (c *FwCacheListCmd) Run(globals *CLI) error {
+	cache, err := firmware.NewCache()
+	if err != nil {
+		return err
+	}
+
+	entries, err := cache.List()
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("No cached firmware files.")
+		return nil
+	}
+
+	fmt.Printf("Cached firmware files (%d):\n\n", len(entries))
+	for _, e := range entries {
+		fmt.Printf("  %-12s  %-10s  %s\n",
+			e.Version,
+			humanizeBytes(e.FileSize),
+			e.Downloaded.Format("2006-01-02 15:04"))
+	}
+
+	return nil
+}
+
+type FwCacheClearCmd struct{}
+
+func (c *FwCacheClearCmd) Run(globals *CLI) error {
+	cache, err := firmware.NewCache()
+	if err != nil {
+		return err
+	}
+
+	entries, _ := cache.List()
+	if len(entries) == 0 {
+		fmt.Println("Cache is already empty.")
+		return nil
+	}
+
+	if err := cache.Clear(); err != nil {
+		return fmt.Errorf("failed to clear cache: %w", err)
+	}
+
+	fmt.Printf("Cleared %d cached firmware file(s).\n", len(entries))
+	return nil
+}
+
+type FwCachePathCmd struct{}
+
+func (c *FwCachePathCmd) Run(globals *CLI) error {
+	cache, err := firmware.NewCache()
+	if err != nil {
+		return err
+	}
+	fmt.Println(cache.Path())
+	return nil
+}
+
+type FwPassdbCmd struct {
+	File   string `arg:"" help:"ESP32 firmware image file (.bin)"`
+	JSON   bool   `help:"Output as JSON" short:"j"`
+	Search string `help:"Emulate firmware lookup for part number (exact match, shows passwords that would be tried)" short:"s"`
+}
+
+func (c *FwPassdbCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+
+	// Parse the firmware image
+	img, err := firmware.ParseESP32Image(c.File)
+	if err != nil {
+		return fmt.Errorf("failed to parse firmware: %w", err)
+	}
+
+	// Extract password database
+	db, err := firmware.ExtractPasswordDatabase(img)
+	if err != nil {
+		return fmt.Errorf("failed to extract password database: %w", err)
+	}
+
+	// Search mode: emulate firmware lookup
+	if c.Search != "" {
+		return c.runSearch(db)
+	}
+
+	// Full database listing
+	entries := db.Entries
+
+	if c.JSON {
+		data, _ := json.MarshalIndent(struct {
+			Version   string                   `json:"version"`
+			EntrySize int                      `json:"entry_size"`
+			Count     int                      `json:"count"`
+			Entries   []firmware.PasswordEntry `json:"entries"`
+		}{
+			Version:   db.Version,
+			EntrySize: db.EntrySize,
+			Count:     len(entries),
+			Entries:   entries,
+		}, "", "  ")
+		fmt.Println(string(data))
+		return nil
+	}
+
+	// Table output
+	fmt.Printf("Password Database: %s\n", db.Version)
+	fmt.Printf("Entry size: %d bytes\n", db.EntrySize)
+	fmt.Printf("Total entries: %d\n\n", len(entries))
+
+	// Print unique passwords first
+	fmt.Println("Unique Passwords:")
+	fmt.Println(strings.Repeat("-", 50))
+	for _, pw := range db.UniquePasswords() {
+		ascii := ""
+		allPrintable := true
+		for _, b := range pw {
+			if b < 0x20 || b > 0x7e {
+				allPrintable = false
+				break
+			}
+		}
+		if allPrintable {
+			ascii = fmt.Sprintf(" (%q)", string(pw[:]))
+		}
+		fmt.Printf("  %02x %02x %02x %02x%s\n", pw[0], pw[1], pw[2], pw[3], ascii)
+	}
+	fmt.Println()
+
+	// Print all entries
+	fmt.Println("Part Number Mapping:")
+	fmt.Println(strings.Repeat("-", 115))
+	fmt.Printf("  %-28s  %-11s  %-6s  %-6s  %-4s  %s\n", "Part Number", "Password", "ASCII", "Locked", "RO", "Writable Pages")
+	fmt.Println(strings.Repeat("-", 115))
+
+	for _, entry := range entries {
+		locked := "No"
+		if entry.Locked {
+			locked = "Yes"
+		}
+		ro := "No"
+		if entry.ReadOnly {
+			ro = "Yes"
+		}
+		ascii := entry.FormatPasswordASCII()
+		if ascii != "" {
+			ascii = fmt.Sprintf("%q", ascii)
+		}
+		fmt.Printf("  %-28s  %-11s  %-6s  %-6s  %-4s  %s\n",
+			entry.PartNumber, entry.FormatPassword(), ascii, locked, ro, entry.InterpretFlags())
+	}
+
+	return nil
+}
+
+// runSearch emulates the firmware's password lookup algorithm.
+func (c *FwPassdbCmd) runSearch(db *firmware.PasswordDatabase) error {
+	passwordsToTry := db.GetPasswordsToTry(c.Search)
+	allMatches := db.FindByPartNumber(c.Search)
+
+	// Count including default if present
+	totalPasswords := len(passwordsToTry)
+	if db.DefaultEntry != nil {
+		totalPasswords++
+	}
+
+	if c.JSON {
+		// Include default entry in passwords list for JSON
+		allPasswords := passwordsToTry
+		if db.DefaultEntry != nil {
+			allPasswords = append(allPasswords, *db.DefaultEntry)
+		}
+		data, _ := json.MarshalIndent(struct {
+			PartNumber    string                   `json:"part_number"`
+			MatchCount    int                      `json:"match_count"`
+			PasswordCount int                      `json:"password_count"`
+			Passwords     []firmware.PasswordEntry `json:"passwords"`
+		}{
+			PartNumber:    c.Search,
+			MatchCount:    len(allMatches),
+			PasswordCount: totalPasswords,
+			Passwords:     allPasswords,
+		}, "", "  ")
+		fmt.Println(string(data))
+		return nil
+	}
+
+	fmt.Printf("Firmware Password Lookup Emulation\n")
+	fmt.Printf("Part number: %q (exact match)\n", c.Search)
+	fmt.Println(strings.Repeat("-", 60))
+
+	if len(allMatches) == 0 {
+		fmt.Printf("\nNo entries found for %q\n", c.Search)
+	} else {
+		fmt.Printf("\nDatabase entries matching %q: %d\n", c.Search, len(allMatches))
+		for i, entry := range allMatches {
+			ro := ""
+			if entry.ReadOnly {
+				ro = " (read-only, skipped)"
+			}
+			pwStr := entry.FormatPassword()
+			if ascii := entry.FormatPasswordASCII(); ascii != "" {
+				pwStr = fmt.Sprintf("%s  %q", pwStr, ascii)
+			}
+			fmt.Printf("  %d. %s%s\n", i+1, pwStr, ro)
+		}
+	}
+
+	fmt.Printf("\nPasswords that would be tried: %d\n", totalPasswords)
+	fmt.Println(strings.Repeat("-", 60))
+
+	if totalPasswords == 0 {
+		fmt.Println("  (none)")
+		return nil
+	}
+
+	idx := 1
+	for _, entry := range passwordsToTry {
+		pwStr := entry.FormatPassword()
+		if ascii := entry.FormatPasswordASCII(); ascii != "" {
+			pwStr = fmt.Sprintf("%s  %q", pwStr, ascii)
+		}
+		pages := entry.InterpretFlags()
+		if pages != "" && pages != "none" {
+			pages = fmt.Sprintf("  pages=%s", pages)
+		} else {
+			pages = ""
+		}
+		fmt.Printf("  %d. %s%s\n", idx, pwStr, pages)
+		idx++
+	}
+
+	// Include default entry in the list
+	if db.DefaultEntry != nil {
+		pwStr := db.DefaultEntry.FormatPassword()
+		if ascii := db.DefaultEntry.FormatPasswordASCII(); ascii != "" {
+			pwStr = fmt.Sprintf("%s  %q", pwStr, ascii)
+		}
+		fmt.Printf("  %d. %s  (default)\n", idx, pwStr)
+	}
+
+	return nil
+}
+
+// CLIProgressBar renders a terminal-friendly progress bar.
+type CLIProgressBar struct {
+	width   int
+	current int64
+	total   int64
+}
+
+func (p *CLIProgressBar) Update(current, total int64, desc string) {
+	p.current = current
+	p.total = total
+	if total == 0 {
+		fmt.Printf("\r  %s...", desc)
+		return
+	}
+	percent := float64(current) / float64(total) * 100
+	filled := int(float64(p.width) * float64(current) / float64(total))
+	if filled > p.width {
+		filled = p.width
+	}
+	bar := strings.Repeat("=", filled) + strings.Repeat(" ", p.width-filled)
+	fmt.Printf("\r  %s [%s] %.1f%%", desc, bar, percent)
+}
+
+func (p *CLIProgressBar) Complete() {
+	fmt.Println()
+}
+
+func humanizeBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
 // --- Support Commands ---
