@@ -46,30 +46,51 @@ The protocol uses **JSON messages wrapped in a binary envelope over BLE GATT**, 
 
 ### Binary Envelope Format
 
-Messages use a binary envelope with an outer header, header section (JSON envelope), and body section.
+Messages use a device transport header followed by **modified binme** binary envelope sections.
+
+**Note:** The SFP Wizard device uses a modified version of the binme protocol. Key differences from standard binme:
+- Header section uses type `0x03` instead of standard `0x01`
+- Header section is 9 bytes (vs standard 8), with single-byte length at byte 8
+- Body section matches standard binme format
 
 ```
-[Outer Header - 4 bytes]
-  bytes 0-1: total message length (big-endian)
+[Device Transport Header - 4 bytes]
+  bytes 0-1: total message length (big-endian, includes this header)
   bytes 2-3: sequence number (matches request ID, big-endian)
 
-[Header Section - 9 bytes + data]
-  byte 0: marker (0x03 = header section)
-  byte 1: format (0x01 = JSON)
-  byte 2: compression (0x01 = zlib for requests, may be 0x01 but uncompressed for responses)
+[Header Section - 9 bytes + data] (device-specific format)
+  byte 0: type (0x03 = device header type)
+  byte 1: format (0x01 = FORMAT_JSON)
+  byte 2: isCompressed (0x00 = none, 0x01 = zlib)
   byte 3: flags (0x01 for requests, 0x00 for responses)
   bytes 4-7: reserved (0x00 0x00 0x00 0x00)
-  byte 8: data length (single byte)
-  bytes 9+: header data (zlib compressed for requests, raw JSON for responses)
+  byte 8: length (single byte)
+  bytes 9+: header data (zlib compressed for requests, may be raw JSON for responses)
 
-[Body Section - 8 bytes + data]
-  byte 0: marker (0x02 = body section)
-  byte 1: format (0x01 = JSON)
-  byte 2: compression (0x01 = zlib, 0x00 = none)
+[Body Section - 8 bytes + data] (standard binme format)
+  byte 0: type (0x02 = TYPE_BODY)
+  byte 1: format (0x01 = FORMAT_JSON, 0x02 = FORMAT_STRING, 0x03 = FORMAT_BINARY)
+  byte 2: isCompressed (0x00 = none, 0x01 = zlib)
   byte 3: reserved (0x00)
-  bytes 4-7: data length (big-endian)
+  bytes 4-7: length (big-endian uint32)
   bytes 8+: body data
 ```
+
+**Binme Constants (standard library values):**
+
+| Constant      | Value | Description                                |
+| ------------- | ----- | ------------------------------------------ |
+| TYPE_HEADER   | 0x01  | Header section type (standard binme)       |
+| TYPE_BODY     | 0x02  | Body section type                          |
+| FORMAT_JSON   | 0x01  | JSON data format                           |
+| FORMAT_STRING | 0x02  | UTF-8 string format                        |
+| FORMAT_BINARY | 0x03  | Raw binary format                          |
+
+**Device-specific values:**
+
+| Field              | Value | Description                                |
+| ------------------ | ----- | ------------------------------------------ |
+| Device header type | 0x03  | Device uses 0x03 instead of standard 0x01  |
 
 ### Compression Notes
 
@@ -793,26 +814,26 @@ sfpw fw passdb -s "OM-SFP28-LR" firmware.bin
 Raw request to `/api/1.0/deadbeefcafe/stats`:
 
 ```
-Outer header:    00 9a 00 05
-                 ^^^^^       - total length (154 bytes)
-                       ^^^^^ - sequence number (5)
+Transport header:  00 9a 00 05
+                   ^^^^^       - total length (154 bytes)
+                         ^^^^^ - sequence number (5)
 
-Header section:  03 01 01 01 00 00 00 00 7d
-                 ^^ - marker (header)
-                    ^^ - format (JSON)
-                       ^^ - compression (zlib)?
-                          ^^ - flags
-                             ^^^^^^^^^^^ - reserved
-                                         ^^ - compressed length (125 bytes)
-                 [125 bytes of zlib compressed JSON]
+Header section:    03 01 01 01 00 00 00 00 7d
+                   ^^ - type (0x03 = device header)
+                      ^^ - format (0x01 = FORMAT_JSON)
+                         ^^ - isCompressed (0x01 = zlib)
+                            ^^ - flags (0x01 for requests)
+                               ^^^^^^^^^^^ - reserved
+                                           ^^ - length (125 bytes)
+                   [125 bytes of zlib compressed JSON]
 
-Body section:    02 01 01 00 00 00 00 08
-                 ^^ - marker (body)
-                    ^^ - format (JSON)
-                       ^^ - compression (zlib)?
-                          ^^ - reserved
-                             ^^^^^^^^^^^ - length (8 bytes)
-                 78 9c 03 00 00 00 00 01   (compressed empty body)
+Body section:      02 01 01 00 00 00 00 08
+                   ^^ - type (0x02 = TYPE_BODY)
+                      ^^ - format (0x01 = FORMAT_JSON)
+                         ^^ - isCompressed (0x01 = zlib)
+                            ^^ - reserved
+                               ^^^^^^^^^^^ - length (8 bytes, big-endian uint32)
+                   78 9c 03 00 00 00 00 01   (zlib compressed empty body)
 ```
 
 ---
@@ -822,24 +843,24 @@ Body section:    02 01 01 00 00 00 00 08
 Raw response from `/api/version`:
 
 ```
-Outer header:    00 b2 00 01
-                 ^^^^^       - total length (178 bytes)
-                       ^^^^^ - sequence number (1)
+Transport header:  00 b2 00 01
+                   ^^^^^       - total length (178 bytes)
+                         ^^^^^ - sequence number (1)
 
-Header section:  03 01 01 00 00 00 00 00 7b
-                 ^^ - marker (header)
-                    ^^ - format (JSON)
-                       ^^ - compression flag? (but NOT actually compressed!)
-                          ^^ - flags (0x00 for response)
-                             ^^^^^^^^^^^ - reserved
-                                         ^^ - data length (123 bytes)
-                 [123 bytes of RAW JSON - not compressed despite flag]
+Header section:    03 01 01 00 00 00 00 00 7b
+                   ^^ - type (0x03 = device header)
+                      ^^ - format (0x01 = FORMAT_JSON)
+                         ^^ - isCompressed (0x01, but NOT actually compressed!)
+                            ^^ - flags (0x00 for responses)
+                               ^^^^^^^^^^^ - reserved
+                                           ^^ - length (123 bytes)
+                   [123 bytes of RAW JSON - not compressed despite isCompressed flag]
 
-Body section:    02 01 00 00 00 00 00 22
-                 ^^ - marker (body)
-                    ^^ - format (JSON)
-                       ^^ - compression (none)?
-                          ^^ - reserved
-                             ^^^^^^^^^^^ - length (34 bytes)
-                 {"fwv":"1.1.1","apiVersion":"1.0"}
+Body section:      02 01 00 00 00 00 00 22
+                   ^^ - type (0x02 = TYPE_BODY)
+                      ^^ - format (0x01 = FORMAT_JSON)
+                         ^^ - isCompressed (0x00 = none)
+                            ^^ - reserved
+                               ^^^^^^^^^^^ - length (34 bytes, big-endian uint32)
+                   {"fwv":"1.1.1","apiVersion":"1.0"}
 ```
