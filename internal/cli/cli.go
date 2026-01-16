@@ -10,11 +10,15 @@ import (
 	"sfpw-tool/internal/commands"
 	"sfpw-tool/internal/config"
 	"sfpw-tool/internal/store"
+	"sfpw-tool/internal/tui"
 )
 
 // CLI is the root command structure for sfpw.
 type CLI struct {
 	Verbose bool `short:"v" help:"Enable verbose debug output"`
+
+	// Default command - TUI
+	Tui TuiCmd `cmd:"" default:"withargs" help:"Launch interactive TUI (default)"`
 
 	Device   DeviceCmd   `cmd:"" help:"Device info and control"`
 	Module   ModuleCmd   `cmd:"" help:"SFP module operations"`
@@ -46,6 +50,15 @@ type CLI struct {
 	ParseEeprom  ParseEepromLegacyCmd  `cmd:"" name:"parse-eeprom" hidden:""`
 	TestEncode   TestEncodeLegacyCmd   `cmd:"" name:"test-encode" hidden:""`
 	TestPackets  TestPacketsLegacyCmd  `cmd:"" name:"test-packets" hidden:""`
+}
+
+// --- TUI Command ---
+
+type TuiCmd struct{}
+
+func (c *TuiCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	return tui.Run()
 }
 
 // --- Device Commands ---
@@ -138,7 +151,7 @@ func (c *ModuleInfoCmd) Run(globals *CLI) error {
 }
 
 type ModuleReadCmd struct {
-	Output string `arg:"" help:"Output file path for EEPROM data"`
+	Output string `arg:"" optional:"" help:"Output file path (optional; always saves to store)"`
 }
 
 func (c *ModuleReadCmd) Run(globals *CLI) error {
@@ -180,7 +193,7 @@ func (c *SnapshotInfoCmd) Run(globals *CLI) error {
 }
 
 type SnapshotReadCmd struct {
-	Output string `arg:"" help:"Output file path for snapshot data"`
+	Output string `arg:"" optional:"" help:"Output file path (optional; always saves to store)"`
 }
 
 func (c *SnapshotReadCmd) Run(globals *CLI) error {
@@ -274,6 +287,7 @@ func (c *SupportLogsCmd) Run(globals *CLI) error {
 
 type DebugCmd struct {
 	Explore     DebugExploreCmd     `cmd:"" help:"List all BLE services and characteristics"`
+	DumpAll     DebugDumpAllCmd     `cmd:"" name:"dump-all" help:"Dump all read-only API responses as raw JSON"`
 	TestEncode  DebugTestEncodeCmd  `cmd:"" name:"test-encode" help:"Test protocol encoding"`
 	TestPackets DebugTestPacketsCmd `cmd:"" name:"test-packets" help:"Decode packets from TSV file"`
 	ParseEeprom DebugParseEepromCmd `cmd:"" name:"parse-eeprom" help:"Parse SFP/QSFP EEPROM file"`
@@ -286,6 +300,16 @@ func (c *DebugExploreCmd) Run(globals *CLI) error {
 	device := ble.Connect()
 	defer device.Disconnect()
 	commands.Explore(device)
+	return nil
+}
+
+type DebugDumpAllCmd struct{}
+
+func (c *DebugDumpAllCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	device := ble.Connect()
+	defer device.Disconnect()
+	commands.DumpAll(device)
 	return nil
 }
 

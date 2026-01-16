@@ -6,11 +6,16 @@ import (
 
 // ModuleDetails represents the inserted SFP module details.
 type ModuleDetails struct {
-	Type       string `json:"type,omitempty"`
-	Present    bool   `json:"present,omitempty"`
-	VendorName string `json:"vendorName,omitempty"`
-	VendorPN   string `json:"vendorPn,omitempty"`
-	VendorSN   string `json:"vendorSn,omitempty"`
+	PartNumber string `json:"partNumber,omitempty"`
+	Vendor     string `json:"vendor,omitempty"`
+	SN         string `json:"sn,omitempty"`
+	Rev        string `json:"rev,omitempty"`
+	Compliance string `json:"compliance,omitempty"`
+}
+
+// IsModulePresent returns true if a module is detected.
+func (d *ModuleDetails) IsModulePresent() bool {
+	return d.PartNumber != "" || d.Vendor != ""
 }
 
 // GetModuleDetails returns details about the inserted SFP module.
@@ -32,9 +37,32 @@ func (c *Client) ReadModule() ([]byte, error) {
 	return c.FetchBinary("/xsfp/module/start", "/xsfp/module/data")
 }
 
-// GetSnapshotInfo returns snapshot buffer info as raw JSON.
-func (c *Client) GetSnapshotInfo() (json.RawMessage, error) {
-	return c.GetJSON("/xsfp/sync/start")
+// SnapshotInfo represents the snapshot buffer status.
+type SnapshotInfo struct {
+	Size       int    `json:"size"`
+	Chunk      int    `json:"chunk"`
+	PartNumber string `json:"partNumber,omitempty"`
+	Vendor     string `json:"vendor,omitempty"`
+	SN         string `json:"sn,omitempty"`
+}
+
+// HasData returns true if the snapshot has data.
+func (s *SnapshotInfo) HasData() bool {
+	return s.Size > 0
+}
+
+// GetSnapshotInfo returns snapshot buffer info.
+func (c *Client) GetSnapshotInfo() (*SnapshotInfo, error) {
+	body, err := c.GetJSON("/xsfp/sync/start")
+	if err != nil {
+		return nil, err
+	}
+
+	var info SnapshotInfo
+	if err := json.Unmarshal(body, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
 }
 
 // ReadSnapshot reads the snapshot buffer.

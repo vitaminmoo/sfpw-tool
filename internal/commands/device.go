@@ -6,6 +6,7 @@ import (
 	"log"
 	"strings"
 
+	"sfpw-tool/internal/api"
 	"sfpw-tool/internal/ble"
 	"sfpw-tool/internal/config"
 	"sfpw-tool/internal/protocol"
@@ -283,4 +284,51 @@ func Reboot(device bluetooth.Device) {
 		fmt.Printf("Reboot failed: status %d\n", resp.StatusCode)
 		fmt.Printf("Body: %s\n", string(body))
 	}
+}
+
+// DumpAll dumps all read-only API endpoints as raw JSON for archival/debugging.
+func DumpAll(device bluetooth.Device) {
+	client := api.New(device)
+	if err := client.Connect(); err != nil {
+		log.Fatal("Failed to connect:", err)
+	}
+
+	// Define all read-only endpoints to dump
+	endpoints := []struct {
+		name     string
+		endpoint string
+	}{
+		{"info", ""},
+		{"api_version", "/api/version"},
+		{"stats", "/stats"},
+		{"settings", "/settings"},
+		{"bluetooth", "/bt"},
+		{"firmware", "/fw"},
+		{"module_details", "/xsfp/module/details"},
+		{"snapshot_info", "/xsfp/sync/start"},
+	}
+
+	// Collect all responses into a map
+	result := make(map[string]json.RawMessage)
+
+	for _, ep := range endpoints {
+		config.Debugf("--- Fetching %s (%s) ---", ep.name, ep.endpoint)
+		body, err := client.GetJSON(ep.endpoint)
+		if err != nil {
+			config.Debugf("Error: %s", err.Error())
+			// Store error as string value
+			errMsg := fmt.Sprintf("error: %s", err.Error())
+			result[ep.name] = json.RawMessage(fmt.Sprintf("%q", errMsg))
+			continue
+		}
+		config.Debugf("Raw JSON for %s: %s", ep.name, string(body))
+		result[ep.name] = body
+	}
+
+	// Output as formatted JSON
+	output, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		log.Fatal("Failed to marshal JSON:", err)
+	}
+	fmt.Println(string(output))
 }

@@ -29,6 +29,7 @@ type IndexEntry struct {
 	PartNumber   string    `json:"part_number"`
 	SerialNumber string    `json:"serial_number"`
 	ModuleType   string    `json:"module_type"`
+	WavelengthNM int       `json:"wavelength_nm,omitempty"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -236,6 +237,7 @@ func (s *Store) updateIndex(hash string, meta *Metadata) error {
 		PartNumber:   meta.Identity.PartNumber,
 		SerialNumber: meta.Identity.SerialNumber,
 		ModuleType:   meta.ModuleType,
+		WavelengthNM: meta.Specs.WavelengthNM,
 		CreatedAt:    meta.CreatedAt,
 	}
 	index.UpdatedAt = time.Now()

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"sfpw-tool/internal/ble"
+	"sfpw-tool/internal/store"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -34,26 +35,67 @@ func SnapshotInfo(device bluetooth.Device) {
 	PrintJSON(body)
 }
 
-// SnapshotRead reads the snapshot buffer and saves to file
+// SnapshotRead reads the snapshot buffer and saves to store.
+// If filename is not empty, also saves to that file.
 func SnapshotRead(device bluetooth.Device, filename string) {
 	ctx := ble.SetupAPI(device)
+	data, err := SnapshotReadData(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
 
+	// Always save to store
+	s, err := store.OpenDefault()
+	if err != nil {
+		log.Fatalf("Failed to open store: %v", err)
+	}
+
+	source := store.Source{
+		DeviceMAC: ctx.MAC,
+		Timestamp: time.Now(),
+		Method:    "snapshot_read",
+		Filename:  filename,
+	}
+
+	hash, isNew, err := s.Import(data, source)
+	if err != nil {
+		log.Fatalf("Failed to save to store: %v", err)
+	}
+
+	shortHash := store.ShortHash(hash)
+	if isNew {
+		fmt.Printf("Saved to store: %s (new)\n", shortHash)
+	} else {
+		fmt.Printf("Saved to store: %s (existing profile)\n", shortHash)
+	}
+
+	// Optionally save to file
+	if filename != "" {
+		if err := os.WriteFile(filename, data, 0644); err != nil {
+			log.Fatalf("Failed to write file: %v", err)
+		}
+		fmt.Printf("Saved to file: %s\n", filename)
+	}
+
+	// Display info about the data
+	DisplayEEPROMInfo(data)
+}
+
+// SnapshotReadData reads the snapshot buffer and returns the data.
+// This is the low-level function used by both CLI and TUI.
+func SnapshotReadData(ctx *ble.APIContext) ([]byte, error) {
 	// Step 1: GET /xsfp/sync/start to initialize and get size
-	fmt.Println("Initializing snapshot read...")
 	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/xsfp/sync/start"), nil, 10*time.Second)
 	if err != nil {
-		log.Fatal("Failed to initialize:", err)
+		return nil, fmt.Errorf("failed to initialize: %w", err)
 	}
 
 	if resp.StatusCode != 200 {
-		fmt.Printf("Error initializing: status %d\n", resp.StatusCode)
 		if len(body) > 0 {
-			fmt.Printf("Body: %s\n", string(body))
+			return nil, fmt.Errorf("error initializing: status %d: %s", resp.StatusCode, string(body))
 		}
-		return
+		return nil, fmt.Errorf("error initializing: status %d", resp.StatusCode)
 	}
-
-	fmt.Printf("Snapshot info: %s\n", string(body))
 
 	// Parse to get size info
 	var startResp struct {
@@ -67,31 +109,20 @@ func SnapshotRead(device bluetooth.Device, filename string) {
 	}
 
 	// Step 2: GET /xsfp/sync/data to read data
-	fmt.Println("Reading snapshot data...")
 	reqBody := fmt.Sprintf(`{"offset":0,"chunk":%d}`, startResp.Size)
 	resp, body, err = ctx.SendRequest("GET", ctx.APIPath("/xsfp/sync/data"), []byte(reqBody), 30*time.Second)
 	if err != nil {
-		log.Fatal("Failed to read data:", err)
+		return nil, fmt.Errorf("failed to read data: %w", err)
 	}
 
 	if resp.StatusCode != 200 {
-		fmt.Printf("Error reading data: status %d\n", resp.StatusCode)
 		if len(body) > 0 {
-			fmt.Printf("Body: %s\n", string(body))
+			return nil, fmt.Errorf("error reading data: status %d: %s", resp.StatusCode, string(body))
 		}
-		return
+		return nil, fmt.Errorf("error reading data: status %d", resp.StatusCode)
 	}
 
-	fmt.Printf("Received %d bytes\n", len(body))
-
-	// Save to file
-	if err := os.WriteFile(filename, body, 0644); err != nil {
-		log.Fatalf("Failed to write file: %v", err)
-	}
-	fmt.Printf("Saved to: %s\n", filename)
-
-	// Display info about the data
-	DisplayEEPROMInfo(body)
+	return body, nil
 }
 
 // SnapshotWrite writes EEPROM data to the snapshot buffer

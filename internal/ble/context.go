@@ -10,6 +10,7 @@ import (
 
 	"sfpw-tool/internal/config"
 	"sfpw-tool/internal/protocol"
+	"sfpw-tool/internal/util"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -46,6 +47,9 @@ func (ctx *APIContext) enableNotifications() error {
 		defer ctx.responseMu.Unlock()
 
 		config.Debugf("Notification received: %d bytes (total so far: %d)", len(buf), ctx.responseBuf.Len())
+		if config.Verbose {
+			util.PrintHexDump(buf)
+		}
 
 		// First packet - parse outer header to get expected length
 		if ctx.responseBuf.Len() == 0 && len(buf) >= 4 {
@@ -135,6 +139,9 @@ func (ctx *APIContext) SendRequest(method, path string, body []byte, timeout tim
 	}
 
 	config.Debugf("Writing %d bytes...", len(dataToSend))
+	if config.Verbose {
+		util.PrintHexDump(dataToSend)
+	}
 	_, err = ctx.WriteChar.WriteWithoutResponse(dataToSend)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to write request: %w", err)
@@ -204,6 +211,9 @@ func (ctx *APIContext) SendRawBodyRequest(method, path string, body []byte, time
 		chunk := dataToSend[offset:end]
 
 		config.Debugf("Writing chunk %d-%d (%d bytes)", offset, end, len(chunk))
+		if config.Verbose {
+			util.PrintHexDump(chunk)
+		}
 		_, err = ctx.WriteChar.WriteWithoutResponse(chunk)
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to write chunk at offset %d: %w", offset, err)
