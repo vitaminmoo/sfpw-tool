@@ -88,7 +88,7 @@ type Model struct {
 	availableFwLoading  bool
 	availableFwError    string
 	lastFirmwareRefresh time.Time // When we last refreshed the firmware list
-	cachedFirmware      []firmware.CacheEntry
+	cachedFirmware      []firmware.FirmwareEntry
 
 	// Firmware sync progress (downloading all versions)
 	fwSyncing          bool
@@ -218,13 +218,13 @@ type firmwareSyncProgressMsg struct {
 // firmwareSyncCompleteMsg signals firmware sync completed.
 type firmwareSyncCompleteMsg struct {
 	versions []firmware.FirmwareVersion
-	cached   []firmware.CacheEntry
+	cached   []firmware.FirmwareEntry
 	err      error
 }
 
 // cachedFirmwareMsg delivers cached firmware list.
 type cachedFirmwareMsg struct {
-	cached []firmware.CacheEntry
+	cached []firmware.FirmwareEntry
 }
 
 // firmwareImportedMsg signals a file was imported to cache.
@@ -1981,7 +1981,7 @@ func moduleInfoTickCmd() tea.Cmd {
 // importFirmwareFileCmd imports a local file into the firmware cache.
 func importFirmwareFileCmd(path string) tea.Cmd {
 	return func() tea.Msg {
-		cache, err := firmware.NewCache()
+		cache, err := firmware.NewFirmwareStore()
 		if err != nil {
 			return firmwareImportedMsg{err: err}
 		}
@@ -2004,7 +2004,7 @@ func importFirmwareFileCmd(path string) tea.Cmd {
 // downloadFirmwareCmd downloads a firmware version to the cache.
 func downloadFirmwareCmd(fw firmware.FirmwareVersion) tea.Cmd {
 	return func() tea.Msg {
-		cache, err := firmware.NewCache()
+		cache, err := firmware.NewFirmwareStore()
 		if err != nil {
 			return firmwareDownloadedMsg{err: err}
 		}
@@ -2051,7 +2051,7 @@ func flashFirmwareCmd(client *api.Client, path string) tea.Cmd {
 func syncFirmwareCacheCmd() tea.Cmd {
 	return func() tea.Msg {
 		// Create cache and manifest client
-		cache, err := firmware.NewCache()
+		cache, err := firmware.NewFirmwareStore()
 		if err != nil {
 			return firmwareSyncCompleteMsg{err: fmt.Errorf("cache error: %w", err)}
 		}
@@ -2095,7 +2095,7 @@ func syncFirmwareCacheCmd() tea.Cmd {
 // refreshCachedFirmwareCmd just refreshes the cached firmware list without downloading.
 func refreshCachedFirmwareCmd() tea.Cmd {
 	return func() tea.Msg {
-		cache, err := firmware.NewCache()
+		cache, err := firmware.NewFirmwareStore()
 		if err != nil {
 			return cachedFirmwareMsg{}
 		}

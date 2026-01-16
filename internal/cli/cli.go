@@ -19,8 +19,8 @@ import (
 type CLI struct {
 	Verbose bool `short:"v" help:"Enable verbose debug output"`
 
-	// Default command - TUI
-	Tui TuiCmd `cmd:"" default:"withargs" help:"Launch interactive TUI (default)"`
+	// TUI command (work in progress)
+	Tui TuiCmd `cmd:"" help:"Launch interactive TUI (work in progress)"`
 
 	Device   DeviceCmd   `cmd:"" help:"Device info and control"`
 	Module   ModuleCmd   `cmd:"" help:"SFP module operations"`
@@ -221,13 +221,13 @@ func (c *SnapshotWriteCmd) Run(globals *CLI) error {
 // --- Firmware Commands ---
 
 type FwCmd struct {
-	Status       FwStatusCmd       `cmd:"" help:"Get detailed firmware status"`
-	Update       FwUpdateCmd       `cmd:"" help:"Upload and install firmware from file"`
-	Abort        FwAbortCmd        `cmd:"" help:"Abort an in-progress firmware update"`
-	GetAvailable FwGetAvailableCmd `cmd:"" name:"get-available" help:"List available firmware versions from cloud"`
-	Download     FwDownloadCmd     `cmd:"" help:"Download firmware to local cache"`
-	Cache        FwCacheCmd        `cmd:"" help:"Manage firmware cache"`
-	Passdb       FwPassdbCmd       `cmd:"" help:"Extract password database from firmware image"`
+	Status   FwStatusCmd   `cmd:"" help:"Get detailed firmware status"`
+	Update   FwUpdateCmd   `cmd:"" help:"Upload and install firmware (from file or downloaded version)"`
+	Abort    FwAbortCmd    `cmd:"" help:"Abort an in-progress firmware update"`
+	Download FwDownloadCmd `cmd:"" help:"Download all available firmware versions"`
+	List     FwListCmd     `cmd:"" help:"List downloaded firmware files"`
+	Path     FwPathCmd     `cmd:"" help:"Show firmware storage directory path"`
+	Passdb   FwPassdbCmd   `cmd:"" help:"Extract password database from firmware image"`
 }
 
 type FwStatusCmd struct{}
@@ -241,14 +241,45 @@ func (c *FwStatusCmd) Run(globals *CLI) error {
 }
 
 type FwUpdateCmd struct {
-	File string `arg:"" help:"Firmware file to upload"`
+	FileOrVersion string `arg:"" help:"Firmware file path or downloaded version (e.g., v1.1.1)"`
 }
 
 func (c *FwUpdateCmd) Run(globals *CLI) error {
 	config.Verbose = globals.Verbose
+
+	// Check if it's a file path or a version string
+	filePath := c.FileOrVersion
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		// Not a file, try to find in firmware store
+		store, err := firmware.NewFirmwareStore()
+		if err != nil {
+			return fmt.Errorf("failed to open firmware store: %w", err)
+		}
+
+		// Look for matching version
+		entries, err := store.List()
+		if err != nil {
+			return fmt.Errorf("failed to list firmware: %w", err)
+		}
+
+		version := c.FileOrVersion
+		// Try with and without 'v' prefix
+		for _, e := range entries {
+			if e.Version == version || e.Version == "v"+version || "v"+e.Version == version {
+				filePath = e.Path
+				fmt.Printf("Using downloaded firmware: %s\n", e.Version)
+				break
+			}
+		}
+
+		if filePath == c.FileOrVersion {
+			return fmt.Errorf("firmware not found: %s (not a file or downloaded version)", c.FileOrVersion)
+		}
+	}
+
 	device := ble.Connect()
 	defer device.Disconnect()
-	commands.FirmwareUpdate(device, c.File)
+	commands.FirmwareUpdate(device, filePath)
 	return nil
 }
 
@@ -262,61 +293,48 @@ func (c *FwAbortCmd) Run(globals *CLI) error {
 	return nil
 }
 
-type FwGetAvailableCmd struct {
-	Channel  string `help:"Filter by channel" default:"release"`
-	Platform string `help:"Filter by platform" default:"ESP32"`
-	Product  string `help:"Filter by product" default:"SFP-Wizard"`
-	JSON     bool   `help:"Output as JSON" short:"j"`
-}
+type FwListCmd struct{}
 
-func (c *FwGetAvailableCmd) Run(globals *CLI) error {
-	config.Verbose = globals.Verbose
-
-	client := firmware.NewManifestClient()
-	filter := firmware.ManifestFilter{
-		Channel:  c.Channel,
-		Platform: c.Platform,
-		Product:  c.Product,
-	}
-
-	versions, err := client.GetAvailable(filter)
+func (c *FwListCmd) Run(globals *CLI) error {
+	store, err := firmware.NewFirmwareStore()
 	if err != nil {
-		return fmt.Errorf("failed to fetch available firmware: %w", err)
+		return err
 	}
 
-	if len(versions) == 0 {
-		fmt.Println("No firmware versions found matching the filter.")
+	entries, err := store.List()
+	if err != nil {
+		return err
+	}
+
+	if len(entries) == 0 {
+		fmt.Println("No firmware files downloaded.")
+		fmt.Println("Download firmware with: sfpw fw download")
 		return nil
 	}
 
-	if c.JSON {
-		data, _ := json.MarshalIndent(versions, "", "  ")
-		fmt.Println(string(data))
-		return nil
-	}
-
-	// Table output
-	fmt.Printf("Available firmware versions (%d found):\n\n", len(versions))
-	fmt.Printf("  %-12s  %-12s  %-10s  %s\n", "VERSION", "DATE", "SIZE", "SHA256")
-	fmt.Println(strings.Repeat("-", 70))
-	for _, v := range versions {
-		sha := v.SHA256
-		if len(sha) > 16 {
-			sha = sha[:16] + "..."
-		}
-		fmt.Printf("  %-12s  %-12s  %-10s  %s\n",
-			v.Version,
-			v.Created.Format("2006-01-02"),
-			humanizeBytes(v.FileSize),
-			sha)
+	fmt.Printf("Downloaded firmware files (%d):\n\n", len(entries))
+	for _, e := range entries {
+		fmt.Printf("  %-12s  %-10s  %s\n",
+			e.Version,
+			humanizeBytes(e.FileSize),
+			e.Downloaded.Format("2006-01-02 15:04"))
 	}
 
 	return nil
 }
 
-type FwDownloadCmd struct {
-	Version string `arg:"" optional:"" help:"Firmware version to download (default: latest)"`
+type FwPathCmd struct{}
+
+func (c *FwPathCmd) Run(globals *CLI) error {
+	store, err := firmware.NewFirmwareStore()
+	if err != nil {
+		return err
+	}
+	fmt.Println(store.Path())
+	return nil
 }
+
+type FwDownloadCmd struct{}
 
 func (c *FwDownloadCmd) Run(globals *CLI) error {
 	config.Verbose = globals.Verbose
@@ -328,109 +346,42 @@ func (c *FwDownloadCmd) Run(globals *CLI) error {
 	}
 
 	if len(versions) == 0 {
-		return fmt.Errorf("no firmware versions available")
-	}
-
-	var target firmware.FirmwareVersion
-	if c.Version == "" {
-		target = versions[0] // Latest
-		fmt.Printf("Downloading latest version: %s\n", target.Version)
-	} else {
-		for _, v := range versions {
-			if v.Version == c.Version || v.Version == "v"+c.Version {
-				target = v
-				break
-			}
-		}
-		if target.Version == "" {
-			return fmt.Errorf("version %s not found", c.Version)
-		}
-	}
-
-	cache, err := firmware.NewCache()
-	if err != nil {
-		return err
-	}
-
-	progressBar := &CLIProgressBar{width: 40}
-	path, err := cache.Download(target, func(current, total int64, desc string) {
-		progressBar.Update(current, total, desc)
-	})
-	progressBar.Complete()
-
-	if err != nil {
-		return err
-	}
-
-	fmt.Printf("Firmware cached at: %s\n", path)
-	return nil
-}
-
-type FwCacheCmd struct {
-	List  FwCacheListCmd  `cmd:"" help:"List cached firmware files"`
-	Clear FwCacheClearCmd `cmd:"" help:"Clear firmware cache"`
-	Path  FwCachePathCmd  `cmd:"" help:"Show cache directory path"`
-}
-
-type FwCacheListCmd struct{}
-
-func (c *FwCacheListCmd) Run(globals *CLI) error {
-	cache, err := firmware.NewCache()
-	if err != nil {
-		return err
-	}
-
-	entries, err := cache.List()
-	if err != nil {
-		return err
-	}
-
-	if len(entries) == 0 {
-		fmt.Println("No cached firmware files.")
+		fmt.Println("No firmware versions available from cloud.")
 		return nil
 	}
 
-	fmt.Printf("Cached firmware files (%d):\n\n", len(entries))
-	for _, e := range entries {
-		fmt.Printf("  %-12s  %-10s  %s\n",
-			e.Version,
-			humanizeBytes(e.FileSize),
-			e.Downloaded.Format("2006-01-02 15:04"))
-	}
+	fmt.Printf("Found %d firmware version(s) available:\n\n", len(versions))
 
-	return nil
-}
-
-type FwCacheClearCmd struct{}
-
-func (c *FwCacheClearCmd) Run(globals *CLI) error {
-	cache, err := firmware.NewCache()
+	store, err := firmware.NewFirmwareStore()
 	if err != nil {
 		return err
 	}
 
-	entries, _ := cache.List()
-	if len(entries) == 0 {
-		fmt.Println("Cache is already empty.")
-		return nil
+	downloaded := 0
+	skipped := 0
+	for _, v := range versions {
+		// Check if already downloaded
+		if store.Has(v.Version, v.SHA256) {
+			fmt.Printf("  %s: already downloaded\n", v.Version)
+			skipped++
+			continue
+		}
+
+		fmt.Printf("  %s: downloading...", v.Version)
+		progressBar := &CLIProgressBar{width: 30}
+		_, err := store.Download(v, func(current, total int64, desc string) {
+			progressBar.Update(current, total, "")
+		})
+		progressBar.Complete()
+
+		if err != nil {
+			fmt.Printf(" error: %v\n", err)
+			continue
+		}
+		downloaded++
 	}
 
-	if err := cache.Clear(); err != nil {
-		return fmt.Errorf("failed to clear cache: %w", err)
-	}
-
-	fmt.Printf("Cleared %d cached firmware file(s).\n", len(entries))
-	return nil
-}
-
-type FwCachePathCmd struct{}
-
-func (c *FwCachePathCmd) Run(globals *CLI) error {
-	cache, err := firmware.NewCache()
-	if err != nil {
-		return err
-	}
-	fmt.Println(cache.Path())
+	fmt.Printf("\nDownloaded %d, skipped %d (already present)\n", downloaded, skipped)
 	return nil
 }
 

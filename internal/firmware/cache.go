@@ -12,74 +12,69 @@ import (
 	"time"
 )
 
-// Cache manages downloaded firmware files.
-type Cache struct {
+// FirmwareStore manages downloaded firmware files.
+type FirmwareStore struct {
 	baseDir string
 }
 
-// CacheEntry represents a cached firmware file.
-type CacheEntry struct {
+// FirmwareEntry represents a downloaded firmware file.
+type FirmwareEntry struct {
 	Path       string
 	Version    string
 	FileSize   int64
 	Downloaded time.Time
 }
 
-// DefaultCachePath returns the default cache directory.
-func DefaultCachePath() (string, error) {
-	cacheDir, err := os.UserCacheDir()
+// DefaultFirmwareStorePath returns the default firmware storage directory.
+func DefaultFirmwareStorePath() (string, error) {
+	home, err := os.UserHomeDir()
 	if err != nil {
-		// Fallback to home directory
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", err
-		}
-		cacheDir = filepath.Join(home, ".cache")
+		return "", err
 	}
-	return filepath.Join(cacheDir, "sfpw", "firmware"), nil
+	return filepath.Join(home, ".local", "share", "sfpw-tools", "firmware"), nil
 }
 
-// NewCache creates a cache at the default location.
-func NewCache() (*Cache, error) {
-	path, err := DefaultCachePath()
+// NewFirmwareStore creates a firmware store at the default location.
+func NewFirmwareStore() (*FirmwareStore, error) {
+	path, err := DefaultFirmwareStorePath()
 	if err != nil {
 		return nil, err
 	}
-	return NewCacheAt(path)
+	return NewFirmwareStoreAt(path)
 }
 
-// NewCacheAt creates a cache at the specified path.
-func NewCacheAt(path string) (*Cache, error) {
+// NewFirmwareStoreAt creates a firmware store at the specified path.
+func NewFirmwareStoreAt(path string) (*FirmwareStore, error) {
 	if err := os.MkdirAll(path, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create cache directory: %w", err)
+		return nil, fmt.Errorf("failed to create firmware directory: %w", err)
 	}
-	return &Cache{baseDir: path}, nil
+	return &FirmwareStore{baseDir: path}, nil
 }
 
-// Path returns the cache directory path.
-func (c *Cache) Path() string {
-	return c.baseDir
+// Path returns the firmware storage directory path.
+func (s *FirmwareStore) Path() string {
+	return s.baseDir
 }
 
-// GetPath returns the cache path for a firmware version.
-func (c *Cache) GetPath(version string) string {
+// GetPath returns the storage path for a firmware version.
+func (s *FirmwareStore) GetPath(version string) string {
 	// Sanitize version string for filename
 	safeVersion := strings.ReplaceAll(version, "/", "_")
-	return filepath.Join(c.baseDir, fmt.Sprintf("sfpw_%s.bin", safeVersion))
+	return filepath.Join(s.baseDir, fmt.Sprintf("sfpw_%s.bin", safeVersion))
 }
 
-// Has checks if a firmware version is cached and valid.
-func (c *Cache) Has(version, expectedSHA256 string) bool {
-	path := c.GetPath(version)
+// Has checks if a firmware version is downloaded and valid.
+func (s *FirmwareStore) Has(version, expectedSHA256 string) bool {
+	path := s.GetPath(version)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return false
 	}
 
 	// Verify checksum if provided
 	if expectedSHA256 != "" {
-		actualSHA256, err := c.computeSHA256(path)
+		actualSHA256, err := s.computeSHA256(path)
 		if err != nil || actualSHA256 != expectedSHA256 {
-			// Invalid cache entry, remove it
+			// Invalid entry, remove it
 			os.Remove(path)
 			return false
 		}
@@ -88,21 +83,21 @@ func (c *Cache) Has(version, expectedSHA256 string) bool {
 	return true
 }
 
-// Get returns the path to a cached firmware file.
-// Returns empty string if not cached.
-func (c *Cache) Get(version, expectedSHA256 string) string {
-	if c.Has(version, expectedSHA256) {
-		return c.GetPath(version)
+// Get returns the path to a downloaded firmware file.
+// Returns empty string if not present.
+func (s *FirmwareStore) Get(version, expectedSHA256 string) string {
+	if s.Has(version, expectedSHA256) {
+		return s.GetPath(version)
 	}
 	return ""
 }
 
-// Download fetches firmware and stores in cache with verification.
-func (c *Cache) Download(v FirmwareVersion, progress ProgressCallback) (string, error) {
-	// Check if already cached
-	if path := c.Get(v.Version, v.SHA256); path != "" {
+// Download fetches firmware and stores it with verification.
+func (s *FirmwareStore) Download(v FirmwareVersion, progress ProgressCallback) (string, error) {
+	// Check if already downloaded
+	if path := s.Get(v.Version, v.SHA256); path != "" {
 		if progress != nil {
-			progress(v.FileSize, v.FileSize, "Using cached firmware")
+			progress(v.FileSize, v.FileSize, "Already downloaded")
 		}
 		return path, nil
 	}
@@ -111,7 +106,7 @@ func (c *Cache) Download(v FirmwareVersion, progress ProgressCallback) (string, 
 		return "", fmt.Errorf("no download URL available for version %s", v.Version)
 	}
 
-	destPath := c.GetPath(v.Version)
+	destPath := s.GetPath(v.Version)
 	tmpPath := destPath + ".tmp"
 
 	// Download to temp file
@@ -181,7 +176,7 @@ func (c *Cache) Download(v FirmwareVersion, progress ProgressCallback) (string, 
 	return destPath, nil
 }
 
-func (c *Cache) computeSHA256(path string) (string, error) {
+func (s *FirmwareStore) computeSHA256(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
@@ -196,9 +191,9 @@ func (c *Cache) computeSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// List returns all cached firmware entries.
-func (c *Cache) List() ([]CacheEntry, error) {
-	entries, err := os.ReadDir(c.baseDir)
+// List returns all downloaded firmware entries.
+func (s *FirmwareStore) List() ([]FirmwareEntry, error) {
+	entries, err := os.ReadDir(s.baseDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -206,7 +201,7 @@ func (c *Cache) List() ([]CacheEntry, error) {
 		return nil, err
 	}
 
-	var result []CacheEntry
+	var result []FirmwareEntry
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".bin") {
 			continue
@@ -219,8 +214,8 @@ func (c *Cache) List() ([]CacheEntry, error) {
 		name := e.Name()
 		version := strings.TrimPrefix(strings.TrimSuffix(name, ".bin"), "sfpw_")
 
-		result = append(result, CacheEntry{
-			Path:       filepath.Join(c.baseDir, name),
+		result = append(result, FirmwareEntry{
+			Path:       filepath.Join(s.baseDir, name),
 			Version:    version,
 			FileSize:   info.Size(),
 			Downloaded: info.ModTime(),
@@ -230,32 +225,18 @@ func (c *Cache) List() ([]CacheEntry, error) {
 	return result, nil
 }
 
-// Clear removes all cached firmware files.
-func (c *Cache) Clear() error {
-	entries, err := c.List()
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if err := os.Remove(e.Path); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Remove removes a specific cached version.
-func (c *Cache) Remove(version string) error {
-	path := c.GetPath(version)
+// Remove removes a specific downloaded version.
+func (s *FirmwareStore) Remove(version string) error {
+	path := s.GetPath(version)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil // Already gone
 	}
 	return os.Remove(path)
 }
 
-// ImportFile copies a local file into the cache.
-// Returns the cache path and computed SHA256 checksum.
-func (c *Cache) ImportFile(srcPath string) (cachePath string, sha256sum string, size int64, err error) {
+// ImportFile copies a local file into the firmware store.
+// Returns the storage path and computed SHA256 checksum.
+func (s *FirmwareStore) ImportFile(srcPath string) (storagePath string, sha256sum string, size int64, err error) {
 	f, err := os.Open(srcPath)
 	if err != nil {
 		return "", "", 0, fmt.Errorf("failed to open file: %w", err)
@@ -272,12 +253,12 @@ func (c *Cache) ImportFile(srcPath string) (cachePath string, sha256sum string, 
 	baseName := filepath.Base(srcPath)
 	version := strings.TrimSuffix(baseName, filepath.Ext(baseName))
 
-	destPath := c.GetPath(version)
+	destPath := s.GetPath(version)
 	tmpPath := destPath + ".tmp"
 
 	dest, err := os.Create(tmpPath)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("failed to create cache file: %w", err)
+		return "", "", 0, fmt.Errorf("failed to create storage file: %w", err)
 	}
 
 	hasher := sha256.New()

@@ -33,13 +33,13 @@ type IndexEntry struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// DefaultPath returns the default store path (~/.sfpw/store).
+// DefaultPath returns the default store path (~/.local/share/sfpw-tools/store).
 func DefaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".sfpw", "store"), nil
+	return filepath.Join(home, ".local", "share", "sfpw-tools", "store"), nil
 }
 
 // Open opens or creates a store at the given path.
