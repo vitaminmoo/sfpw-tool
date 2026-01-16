@@ -1,6 +1,31 @@
 # UACC SFP Wizard BLE API Protocol
 
-This document describes the BLE API protocol for the UACC SFP Wizard device (firmware version 1.1.1).
+This document describes the BLE API protocol for the UACC SFP Wizard device.
+
+## Firmware Version Compatibility
+
+Tested firmware versions: **1.0.10**, **1.1.0**, **1.1.1**, **1.1.3**
+
+| Endpoint | 1.0.10 | 1.1.0 | 1.1.1+ | Notes |
+|----------|--------|-------|--------|-------|
+| `/api/1.0/{mac}` | ✓ | ✓ | ✓ | Device info |
+| `/api/version` | 404 | 404 | 404 | Not available on tested versions |
+| `/api/1.0/{mac}/stats` | ✓ | ✓ | ✓ | |
+| `/api/1.0/{mac}/settings` | ✓ | ✓ | ✓ | |
+| `/api/1.0/{mac}/bt` | ✓ | ✓ | ✓ | |
+| `/api/1.0/{mac}/fw` | ✓ | ✓ | ✓ | |
+| `/api/1.0/{mac}/xsfp/module/details` | 404 | ✓ | ✓ | **New in 1.1.0**, adds `type` field in 1.1.1 |
+| `/api/1.0/{mac}/xsfp/sync/start` | ✓ | ✓ | ✓ | Returns 417 if no module; adds `type` field in 1.1.1 |
+| `/api/1.0/{mac}/xsfp/module/start` | ? | ✓ | ✓ | Untested on 1.0.10 |
+| `/api/1.0/{mac}/sif/*` | ✓ | ✓ | ✓ | SIF archive operations |
+
+**Key changes in 1.1.0:**
+- Added `/xsfp/module/details` endpoint for quick module info without full EEPROM read
+
+**Key changes in 1.1.1:**
+- Added `type` field ("sfp" or "qsfp") to `/xsfp/module/details` and `/xsfp/sync/start` responses
+
+---
 
 ## Protocol Overview
 
@@ -132,6 +157,8 @@ All endpoints (except `/api/version`) use the base path: `/api/1.0/{mac}/`
 ### GET `/api/version`
 
 Returns firmware and API version info.
+
+**Note:** This endpoint returns 404 on firmware versions 1.0.10 and 1.1.0. Availability on other versions is unknown.
 
 **Response:**
 ```json
@@ -395,7 +422,10 @@ Reboots the device. The BLE connection will drop during reboot.
 
 The XSFP protocol provides direct read/write access to SFP module EEPROM "snapshots". Unlike the SIF protocol which returns a tar archive, XSFP works with raw binary data and supports **writing** to module EEPROM.
 
-**Note:** These endpoints are registered as custom handlers and may not be available on all firmware versions.
+**Version Notes:**
+- `/xsfp/module/details` is **new in 1.1.0** (returns 404 on 1.0.10)
+- Other XSFP endpoints work on both 1.0.10 and 1.1.0
+- All XSFP read operations return 417 (Expectation Failed) if no module is inserted
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -408,6 +438,64 @@ The XSFP protocol provides direct read/write access to SFP module EEPROM "snapsh
 | GET | `/api/1.0/{mac}/xsfp/module/data` | Read module data |
 | GET | `/api/1.0/{mac}/xsfp/module/details` | Get module details |
 | POST | `/api/1.0/{mac}/xsfp/recover` | Recovery operation |
+
+#### GET `/api/1.0/{mac}/xsfp/module/details`
+
+Returns details about the currently inserted SFP module without reading the full EEPROM. Fast way to check module presence and identity.
+
+**Requires:** Firmware 1.1.0+
+
+**Response:**
+```json
+{
+  "partNumber": "SFP-10G-T",
+  "rev": "02",
+  "vendor": "CSY103P17791",
+  "sn": "CSY103P17791",
+  "type": "sfp",
+  "compliance": "10G BASE-SR"
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `partNumber` | Module part number |
+| `rev` | Revision |
+| `vendor` | Vendor name/ID |
+| `sn` | Serial number |
+| `type` | Module type: "sfp" or "qsfp" (1.1.1+) |
+| `compliance` | Transceiver compliance (e.g., "10G BASE-SR", "10G BASE-LR") |
+
+**Note:** Returns 404 if no module is inserted.
+
+#### GET `/api/1.0/{mac}/xsfp/sync/start`
+
+Returns information about the current snapshot buffer contents.
+
+**Requires:** Firmware 1.1.0+
+
+**Response:**
+```json
+{
+  "partNumber": "AXB32-192-20/GR",
+  "vendor": "CI2508081988",
+  "sn": "CI2508081988",
+  "type": "sfp",
+  "chunk": 512,
+  "size": 512
+}
+```
+
+| Field | Description |
+|-------|-------------|
+| `partNumber` | Part number of module in snapshot |
+| `vendor` | Vendor of module in snapshot |
+| `sn` | Serial number of module in snapshot |
+| `type` | Module type: "sfp" or "qsfp" (1.1.1+) |
+| `chunk` | Maximum chunk size for data transfer |
+| `size` | Total size of snapshot data in bytes |
+
+**Note:** Returns 417 (Expectation Failed) if no module is inserted.
 
 #### Snapshot Sizes
 

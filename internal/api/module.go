@@ -10,6 +10,7 @@ type ModuleDetails struct {
 	Vendor     string `json:"vendor,omitempty"`
 	SN         string `json:"sn,omitempty"`
 	Rev        string `json:"rev,omitempty"`
+	Type       string `json:"type,omitempty"` // "sfp" or "qsfp" (1.1.1+)
 	Compliance string `json:"compliance,omitempty"`
 }
 
@@ -44,6 +45,7 @@ type SnapshotInfo struct {
 	PartNumber string `json:"partNumber,omitempty"`
 	Vendor     string `json:"vendor,omitempty"`
 	SN         string `json:"sn,omitempty"`
+	Type       string `json:"type,omitempty"` // "sfp" or "qsfp" (1.1.1+)
 }
 
 // HasData returns true if the snapshot has data.
