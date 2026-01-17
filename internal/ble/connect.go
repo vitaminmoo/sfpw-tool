@@ -53,8 +53,17 @@ func Connect() bluetooth.Device {
 	address, _ := deviceResult.Address.MarshalText()
 	fmt.Printf("Connecting to %s...\n", string(address))
 
-	device, err := adapter.Connect(deviceResult.Address, bluetooth.ConnectionParams{})
-	if err != nil {
+	var device bluetooth.Device
+	maxRetries := 3
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		device, err = adapter.Connect(deviceResult.Address, bluetooth.ConnectionParams{})
+		if err == nil {
+			break
+		}
+		if strings.Contains(err.Error(), "le-connection-abort-by-local") && attempt < maxRetries {
+			fmt.Printf("Connection aborted locally, retrying (%d/%d)...\n", attempt, maxRetries)
+			continue
+		}
 		log.Fatal("Failed to connect:", err)
 	}
 
