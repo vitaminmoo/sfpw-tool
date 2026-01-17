@@ -1,4 +1,4 @@
-module sfpw-tool
+module github.com/vitaminmoo/sfpw-tool
 
 go 1.24.4
 

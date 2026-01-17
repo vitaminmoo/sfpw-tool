@@ -6,11 +6,11 @@ import (
 	"log"
 	"strings"
 
-	"sfpw-tool/internal/api"
-	"sfpw-tool/internal/ble"
-	"sfpw-tool/internal/config"
-	"sfpw-tool/internal/protocol"
-	"sfpw-tool/internal/util"
+	"github.com/vitaminmoo/sfpw-tool/internal/api"
+	"github.com/vitaminmoo/sfpw-tool/internal/ble"
+	"github.com/vitaminmoo/sfpw-tool/internal/config"
+	"github.com/vitaminmoo/sfpw-tool/internal/protocol"
+	"github.com/vitaminmoo/sfpw-tool/internal/util"
 
 	"tinygo.org/x/bluetooth"
 )

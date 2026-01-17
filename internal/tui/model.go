@@ -16,9 +16,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"tinygo.org/x/bluetooth"
 
-	"sfpw-tool/internal/api"
-	"sfpw-tool/internal/firmware"
-	"sfpw-tool/internal/store"
+	"github.com/vitaminmoo/sfpw-tool/internal/api"
+	"github.com/vitaminmoo/sfpw-tool/internal/firmware"
+	"github.com/vitaminmoo/sfpw-tool/internal/store"
 )
 
 // View represents different screens in the TUI.
@@ -91,10 +91,10 @@ type Model struct {
 	cachedFirmware      []firmware.FirmwareEntry
 
 	// Firmware sync progress (downloading all versions)
-	fwSyncing          bool
-	fwSyncPhase        string  // "fetching", "downloading X of Y", "complete"
-	fwSyncProgress     float64 // 0.0 to 1.0
-	fwSyncCurrentVer   string  // Version currently being downloaded
+	fwSyncing        bool
+	fwSyncPhase      string  // "fetching", "downloading X of Y", "complete"
+	fwSyncProgress   float64 // 0.0 to 1.0
+	fwSyncCurrentVer string  // Version currently being downloaded
 
 	// Selected firmware for flashing
 	selectedFwVersion string // e.g. "v1.1.3"
@@ -303,12 +303,12 @@ func NewModel() Model {
 	// Initialize file picker for firmware selection
 	fp := filepicker.New()
 	fp.AllowedTypes = []string{".bin"}
-	fp.DirAllowed = true    // Allow navigating into directories
-	fp.FileAllowed = true   // Allow selecting files
+	fp.DirAllowed = true  // Allow navigating into directories
+	fp.FileAllowed = true // Allow selecting files
 	fp.ShowHidden = false
 	fp.ShowSize = true
 	fp.ShowPermissions = false
-	fp.SetHeight(15)        // Show 15 files at a time
+	fp.SetHeight(15) // Show 15 files at a time
 	// Start in current working directory
 	if cwd, err := os.Getwd(); err == nil {
 		fp.CurrentDirectory = cwd
@@ -1774,7 +1774,6 @@ func scanForDeviceCmd() tea.Msg {
 			adapter.StopScan()
 		}
 	})
-
 	if err != nil {
 		return scanResultMsg{err: fmt.Errorf("scan failed: %w", err)}
 	}

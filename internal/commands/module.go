@@ -8,8 +8,8 @@ import (
 	"os"
 	"time"
 
-	"sfpw-tool/internal/ble"
-	"sfpw-tool/internal/store"
+	"github.com/vitaminmoo/sfpw-tool/internal/ble"
+	"github.com/vitaminmoo/sfpw-tool/internal/store"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -79,7 +79,7 @@ func ModuleRead(device bluetooth.Device, filename string) {
 
 	// Optionally save to file
 	if filename != "" {
-		if err := os.WriteFile(filename, data, 0644); err != nil {
+		if err := os.WriteFile(filename, data, 0o644); err != nil {
 			log.Fatalf("Failed to write file: %v", err)
 		}
 		fmt.Printf("Saved to file: %s\n", filename)

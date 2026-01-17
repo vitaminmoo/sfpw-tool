@@ -7,8 +7,8 @@ import (
 	"os"
 	"strings"
 
-	"sfpw-tool/internal/config"
-	"sfpw-tool/internal/protocol"
+	"github.com/vitaminmoo/sfpw-tool/internal/config"
+	"github.com/vitaminmoo/sfpw-tool/internal/protocol"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -41,7 +41,6 @@ func Connect() bluetooth.Device {
 			adapter.StopScan()
 		}
 	})
-
 	if err != nil {
 		log.Fatal("Scan error:", err)
 	}

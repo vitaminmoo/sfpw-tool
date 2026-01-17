@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"sfpw-tool/internal/eeprom"
-	"sfpw-tool/internal/protocol"
+	"github.com/vitaminmoo/sfpw-tool/internal/eeprom"
+	"github.com/vitaminmoo/sfpw-tool/internal/protocol"
 )
 
 // TestEncode tests the encoding without connecting to device
@@ -72,7 +72,6 @@ func TestEncode() {
 	}
 	fmt.Printf("Decoded header (%d bytes): %s\n", len(headerJSON), string(headerJSON))
 	fmt.Printf("Decoded body (%d bytes): %X\n\n", len(bodyData), bodyData)
-
 }
 
 // TestPackets reads packets from a TSV file and decodes each one

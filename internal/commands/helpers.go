@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"sfpw-tool/internal/ble"
+	"github.com/vitaminmoo/sfpw-tool/internal/ble"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -110,7 +110,7 @@ func FetchAndSaveData(ctx *ble.APIContext, startEndpoint, dataEndpoint, filename
 	fmt.Printf("Received %d bytes\n", len(body))
 
 	// Save to file
-	if err := os.WriteFile(filename, body, 0644); err != nil {
+	if err := os.WriteFile(filename, body, 0o644); err != nil {
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 	fmt.Printf("Saved to: %s\n", filename)

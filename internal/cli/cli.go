@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"sfpw-tool/internal/ble"
-	"sfpw-tool/internal/commands"
-	"sfpw-tool/internal/config"
-	"sfpw-tool/internal/firmware"
-	"sfpw-tool/internal/store"
-	"sfpw-tool/internal/tui"
+	"github.com/vitaminmoo/sfpw-tool/internal/ble"
+	"github.com/vitaminmoo/sfpw-tool/internal/commands"
+	"github.com/vitaminmoo/sfpw-tool/internal/config"
+	"github.com/vitaminmoo/sfpw-tool/internal/firmware"
+	"github.com/vitaminmoo/sfpw-tool/internal/store"
+	"github.com/vitaminmoo/sfpw-tool/internal/tui"
 )
 
 // CLI is the root command structure for sfpw.

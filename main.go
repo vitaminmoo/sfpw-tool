@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"sfpw-tool/internal/cli"
+	"github.com/vitaminmoo/sfpw-tool/internal/cli"
 
 	"github.com/alecthomas/kong"
 )

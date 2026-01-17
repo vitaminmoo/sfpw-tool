@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"sfpw-tool/internal/ble"
-	"sfpw-tool/internal/eeprom"
+	"github.com/vitaminmoo/sfpw-tool/internal/ble"
+	"github.com/vitaminmoo/sfpw-tool/internal/eeprom"
 
 	"tinygo.org/x/bluetooth"
 )
@@ -116,7 +116,7 @@ func SupportDump(device bluetooth.Device) {
 
 	// Save to file
 	filename := fmt.Sprintf("sif-dump-%s.tar", ctx.MAC)
-	if err := os.WriteFile(filename, eepromData, 0644); err != nil {
+	if err := os.WriteFile(filename, eepromData, 0o644); err != nil {
 		log.Fatal("Failed to save file:", err)
 	}
 	fmt.Printf("\nSaved to: %s\n", filename)
