@@ -137,9 +137,8 @@ func (c *DeviceRebootCmd) Run(globals *CLI) error {
 // --- Module Commands ---
 
 type ModuleCmd struct {
-	Info  ModuleInfoCmd  `cmd:"" help:"Get details about the inserted SFP module"`
-	Read  ModuleReadCmd  `cmd:"" help:"Read EEPROM from physical module to file"`
-	Write ModuleWriteCmd `cmd:"" help:"Write EEPROM file to snapshot buffer (alias for snapshot write)"`
+	Info ModuleInfoCmd `cmd:"" help:"Get details about the inserted SFP module"`
+	Read ModuleReadCmd `cmd:"" help:"Read EEPROM from physical module to file"`
 }
 
 type ModuleInfoCmd struct{}
@@ -161,18 +160,6 @@ func (c *ModuleReadCmd) Run(globals *CLI) error {
 	device := ble.Connect()
 	defer device.Disconnect()
 	commands.ModuleRead(device, c.Output)
-	return nil
-}
-
-type ModuleWriteCmd struct {
-	Input string `arg:"" help:"Input EEPROM file to write to snapshot"`
-}
-
-func (c *ModuleWriteCmd) Run(globals *CLI) error {
-	config.Verbose = globals.Verbose
-	device := ble.Connect()
-	defer device.Disconnect()
-	commands.SnapshotWrite(device, c.Input)
 	return nil
 }
 
@@ -207,14 +194,60 @@ func (c *SnapshotReadCmd) Run(globals *CLI) error {
 }
 
 type SnapshotWriteCmd struct {
-	Input string `arg:"" help:"Input EEPROM file to write to snapshot"`
+	FileOrProfile string `arg:"" help:"EEPROM file path or store profile hash"`
 }
 
 func (c *SnapshotWriteCmd) Run(globals *CLI) error {
 	config.Verbose = globals.Verbose
+
+	// Check if it's a file path or a store profile hash
+	filePath := c.FileOrProfile
+	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+		// Not a file, try to find in store
+		s, err := store.OpenDefault()
+		if err != nil {
+			return fmt.Errorf("failed to open store: %w", err)
+		}
+
+		// Look for matching profile hash
+		profiles, err := s.ListWithHashes()
+		if err != nil {
+			return fmt.Errorf("failed to list profiles: %w", err)
+		}
+
+		var fullHash string
+		for hash := range profiles {
+			if hash == c.FileOrProfile || store.ShortHash(hash) == c.FileOrProfile || hash[7:] == c.FileOrProfile {
+				fullHash = hash
+				break
+			}
+		}
+
+		if fullHash == "" {
+			return fmt.Errorf("not found: %s (not a file or store profile)", c.FileOrProfile)
+		}
+
+		// Export to temp file
+		tmpFile, err := os.CreateTemp("", "sfpw-eeprom-*.bin")
+		if err != nil {
+			return fmt.Errorf("failed to create temp file: %w", err)
+		}
+		tmpPath := tmpFile.Name()
+		tmpFile.Close()
+		defer os.Remove(tmpPath)
+
+		if err := s.Export(fullHash, tmpPath); err != nil {
+			return fmt.Errorf("failed to export profile: %w", err)
+		}
+
+		entry := profiles[fullHash]
+		fmt.Printf("Using store profile: %s (%s %s)\n", store.ShortHash(fullHash), entry.VendorName, entry.PartNumber)
+		filePath = tmpPath
+	}
+
 	device := ble.Connect()
 	defer device.Disconnect()
-	commands.SnapshotWrite(device, c.Input)
+	commands.SnapshotWrite(device, filePath)
 	return nil
 }
 
@@ -639,6 +672,13 @@ func humanizeBytes(b int64) string {
 	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
 
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-1] + "…"
+}
+
 // --- Support Commands ---
 
 type SupportCmd struct {
@@ -754,14 +794,18 @@ func (c *StoreListCmd) Run(globals *CLI) error {
 		return nil
 	}
 
-	fmt.Printf("Found %d profile(s):\n\n", len(profiles))
+	fmt.Printf("%d profile(s)\n\n", len(profiles))
 	for hash, entry := range profiles {
 		shortHash := store.ShortHash(hash)
-		fmt.Printf("  %s  %-16s  %-20s  %s\n",
+		wavelength := ""
+		if entry.WavelengthNM > 0 {
+			wavelength = fmt.Sprintf("%dnm", entry.WavelengthNM)
+		}
+		fmt.Printf("  %-12s  %-16s  %-16s  %s\n",
 			shortHash,
-			entry.VendorName,
-			entry.PartNumber,
-			entry.SerialNumber)
+			truncate(entry.VendorName, 16),
+			truncate(entry.PartNumber, 16),
+			wavelength)
 	}
 
 	return nil
@@ -797,17 +841,33 @@ func (c *StoreShowCmd) Run(globals *CLI) error {
 		return fmt.Errorf("profile not found: %s", c.Hash)
 	}
 
+	entry := profiles[fullHash]
 	meta, err := s.GetMetadata(fullHash)
 	if err != nil {
 		return fmt.Errorf("failed to get metadata: %w", err)
 	}
 
-	// Pretty print metadata
-	data, err := json.MarshalIndent(meta, "", "  ")
-	if err != nil {
-		return err
+	shortHash := store.ShortHash(fullHash)
+	fmt.Printf("Hash:        %s\n", shortHash)
+	fmt.Printf("Type:        %s\n", entry.ModuleType)
+	fmt.Printf("Vendor:      %s\n", entry.VendorName)
+	fmt.Printf("Part Number: %s\n", entry.PartNumber)
+	fmt.Printf("Serial:      %s\n", entry.SerialNumber)
+
+	if meta != nil {
+		if meta.Identity.DateCode != "" {
+			fmt.Printf("Date Code:   %s\n", meta.Identity.DateCode)
+		}
+		if meta.Specs.WavelengthNM > 0 {
+			fmt.Printf("Wavelength:  %d nm\n", meta.Specs.WavelengthNM)
+		}
+		if meta.Specs.ConnectorType != "" {
+			fmt.Printf("Connector:   %s\n", meta.Specs.ConnectorType)
+		}
+		fmt.Printf("Sources:     %d\n", len(meta.Sources))
 	}
-	fmt.Println(string(data))
+
+	fmt.Printf("\nExport: sfpw store export %s <file>\n", shortHash)
 
 	return nil
 }

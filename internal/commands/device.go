@@ -241,8 +241,27 @@ func Stats(device bluetooth.Device) {
 
 	fmt.Printf("Battery:      %d%% (%.3fV)\n", stats.Battery, stats.BatteryV)
 	fmt.Printf("Low Battery:  %v\n", stats.IsLowBattery)
-	fmt.Printf("Uptime:       %d seconds\n", stats.Uptime)
+	fmt.Printf("Uptime:       %s\n", formatUptime(stats.Uptime))
 	fmt.Printf("Signal:       %d dBm\n", stats.SignalDbm)
+}
+
+// formatUptime converts milliseconds to a human-readable format.
+func formatUptime(ms int) string {
+	seconds := ms / 1000
+	if seconds < 60 {
+		return fmt.Sprintf("%ds", seconds)
+	}
+	if seconds < 3600 {
+		return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
+	}
+	hours := seconds / 3600
+	minutes := (seconds % 3600) / 60
+	if hours < 24 {
+		return fmt.Sprintf("%dh %dm", hours, minutes)
+	}
+	days := hours / 24
+	hours = hours % 24
+	return fmt.Sprintf("%dd %dh", days, hours)
 }
 
 // Info gets device info via API
