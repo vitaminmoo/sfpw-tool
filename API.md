@@ -2,7 +2,7 @@
 
 This document describes the BLE API protocol for the UACC SFP Wizard device.
 
-Note that it is primarily maintained via LLM and certainly contains errors.
+> [!WARNING] Maintained via LLM with human guidance - certainly contains errors
 
 ## Firmware Version Compatibility
 
