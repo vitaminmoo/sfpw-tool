@@ -86,6 +86,8 @@ $ sfpw-tool snapshot write abc1234
 > [!WARNING]
 > While the OTA update process is implemented very safely on the device itself, there is not zero risk of damage. Proceed with caution.
 
+Downgrades work safely - tested between v1.1.3 and v1.0.10 on hardware version 8.
+
 ```bash
 # Download all available firmware versions
 $ sfpw-tool fw download
@@ -101,6 +103,9 @@ Downloaded firmware files (4):
 
 # Update device firmware (accepts file path or version)
 $ sfpw-tool fw update v1.1.3
+
+# Update from a local firmware file
+$ sfpw-tool fw update 1.0.5.bin
 
 # Check firmware status
 $ sfpw-tool fw status
@@ -169,6 +174,9 @@ $ sfpw-tool debug parse-eeprom module.bin
 - [ ] Finish TUI
 
 ## Notes
+
+> [!NOTE]
+> I do not own any QSFP modules and have not been able to test QSFP functionality.
 
 > [!NOTE]
 > I'm looking for firmware versions older than v1.0.10. If anyone has torn open a device and extracted an older firmware physically, please get in touch!
