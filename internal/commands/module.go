@@ -136,9 +136,9 @@ func ModuleReadData(ctx *ble.APIContext) ([]byte, error) {
 	return body, nil
 }
 
-// DDMStart calls /ddm/start and /ddm/data endpoints to fetch DDM data.
-// This is experimental - the response format is being explored.
-func DDMStart(device bluetooth.Device) {
+// DDM reads DDM (Digital Diagnostic Monitoring) data from the module.
+// Requires DDM to be started from the device UI first.
+func DDM(device bluetooth.Device) {
 	ctx := ble.SetupAPI(device)
 
 	fmt.Println("Calling /ddm/start...")
