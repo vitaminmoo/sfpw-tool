@@ -135,3 +135,96 @@ func ModuleReadData(ctx *ble.APIContext) ([]byte, error) {
 
 	return body, nil
 }
+
+// DDMStart calls /ddm/start and /ddm/data endpoints to fetch DDM data.
+// This is experimental - the response format is being explored.
+func DDMStart(device bluetooth.Device) {
+	ctx := ble.SetupAPI(device)
+
+	fmt.Println("Calling /ddm/start...")
+
+	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/ddm/start"), nil, 10*time.Second)
+	if err != nil {
+		log.Fatal("API request failed:", err)
+	}
+
+	fmt.Printf("Status: %d\n", resp.StatusCode)
+
+	if resp.StatusCode != 200 {
+		if len(body) > 0 {
+			fmt.Printf("Body: %s\n", string(body))
+		}
+		return
+	}
+
+	// Parse start response
+	var startResp struct {
+		Size  int `json:"size"`
+		Chunk int `json:"chunk"`
+	}
+	if err := json.Unmarshal(body, &startResp); err != nil {
+		fmt.Printf("Start response (raw): %s\n", string(body))
+		return
+	}
+
+	fmt.Printf("Start response: size=%d, chunk=%d\n", startResp.Size, startResp.Chunk)
+
+	// Determine how much to request - use chunk size if size is 0
+	requestSize := startResp.Size
+	if requestSize == 0 {
+		requestSize = startResp.Chunk
+	}
+
+	// Now fetch data from /ddm/data
+	fmt.Println("\nCalling /ddm/data...")
+	reqBody := fmt.Sprintf(`{"offset":0,"chunk":%d}`, requestSize)
+	resp, body, err = ctx.SendRequest("GET", ctx.APIPath("/ddm/data"), []byte(reqBody), 60*time.Second)
+	if err != nil {
+		log.Fatal("API request failed:", err)
+	}
+
+	fmt.Printf("Status: %d\n", resp.StatusCode)
+	fmt.Printf("Received %d bytes\n", len(body))
+
+	if len(body) == 0 {
+		fmt.Println("(empty response body)")
+		return
+	}
+
+	// Try to pretty print as JSON first
+	var prettyJSON bytes.Buffer
+	if err := json.Indent(&prettyJSON, body, "", "  "); err != nil {
+		// Not JSON - check if it's text (CSV)
+		if isTextData(body) {
+			fmt.Printf("\n%s", string(body))
+		} else {
+			// Binary data - show hex dump
+			fmt.Printf("Body (hex):\n")
+			for i := 0; i < len(body); i += 16 {
+				end := i + 16
+				if end > len(body) {
+					end = len(body)
+				}
+				fmt.Printf("%04x: % x\n", i, body[i:end])
+			}
+		}
+	} else {
+		fmt.Println(prettyJSON.String())
+	}
+}
+
+// isTextData checks if the data appears to be printable text.
+func isTextData(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	textChars := 0
+	for _, b := range data {
+		// Allow printable ASCII, newlines, tabs, and UTF-8 continuation bytes
+		if (b >= 0x20 && b <= 0x7e) || b == '\n' || b == '\r' || b == '\t' || b >= 0x80 {
+			textChars++
+		}
+	}
+	// Consider it text if >90% of bytes are text-like
+	return float64(textChars)/float64(len(data)) > 0.9
+}

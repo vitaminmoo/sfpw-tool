@@ -137,8 +137,9 @@ func (c *DeviceRebootCmd) Run(globals *CLI) error {
 // --- Module Commands ---
 
 type ModuleCmd struct {
-	Info ModuleInfoCmd `cmd:"" help:"Get details about the inserted SFP module"`
-	Read ModuleReadCmd `cmd:"" help:"Read EEPROM from physical module to file"`
+	Info     ModuleInfoCmd     `cmd:"" help:"Get details about the inserted SFP module"`
+	Read     ModuleReadCmd     `cmd:"" help:"Read EEPROM from physical module to file"`
+	DdmStart ModuleDdmStartCmd `cmd:"" name:"ddm-start" help:"Call /ddm/start endpoint (experimental)"`
 }
 
 type ModuleInfoCmd struct{}
@@ -160,6 +161,16 @@ func (c *ModuleReadCmd) Run(globals *CLI) error {
 	device := ble.Connect()
 	defer device.Disconnect()
 	commands.ModuleRead(device, c.Output)
+	return nil
+}
+
+type ModuleDdmStartCmd struct{}
+
+func (c *ModuleDdmStartCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	device := ble.Connect()
+	defer device.Disconnect()
+	commands.DDMStart(device)
 	return nil
 }
 
