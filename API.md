@@ -146,37 +146,35 @@ Messages use a device transport header followed by **modified binme** binary env
 
 ### Message Structure
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ Transport Header (4 bytes)                                      │
-├──────────────┬──────────────────────────────────────────────────┤
-│ Bytes 0-1    │ Total message length (big-endian, includes header)│
-│ Bytes 2-3    │ Sequence number (big-endian, matches request ID) │
-└──────────────┴──────────────────────────────────────────────────┘
+#### Transport Header (4 bytes)
 
-┌─────────────────────────────────────────────────────────────────┐
-│ Header Section (9 bytes + data) — device-specific format        │
-├──────────────┬──────────────────────────────────────────────────┤
-│ Byte 0       │ Type: 0x03 (device header type)                  │
-│ Byte 1       │ Format: 0x01 (JSON)                              │
-│ Byte 2       │ Compressed: 0x00 (none) or 0x01 (zlib)           │
-│ Byte 3       │ Flags: 0x01 (request) or 0x00 (response)         │
-│ Bytes 4-7    │ Reserved: 0x00 0x00 0x00 0x00                    │
-│ Byte 8       │ Length (single byte)                             │
-│ Bytes 9+     │ Header data (JSON, possibly zlib compressed)     │
-└──────────────┴──────────────────────────────────────────────────┘
+| Offset    | Description                                       |
+|-----------|---------------------------------------------------|
+| Bytes 0-1 | Total message length (big-endian, includes header) |
+| Bytes 2-3 | Sequence number (big-endian, matches request ID)  |
 
-┌─────────────────────────────────────────────────────────────────┐
-│ Body Section (8 bytes + data) — standard binme format           │
-├──────────────┬──────────────────────────────────────────────────┤
-│ Byte 0       │ Type: 0x02 (body)                                │
-│ Byte 1       │ Format: 0x01 (JSON), 0x02 (string), 0x03 (binary)│
-│ Byte 2       │ Compressed: 0x00 (none) or 0x01 (zlib)           │
-│ Byte 3       │ Reserved: 0x00                                   │
-│ Bytes 4-7    │ Length (big-endian uint32)                       │
-│ Bytes 8+     │ Body data                                        │
-└──────────────┴──────────────────────────────────────────────────┘
-```
+#### Header Section (9 bytes + data) — device-specific format
+
+| Offset    | Description                                 |
+|-----------|---------------------------------------------|
+| Byte 0    | Type: 0x03 (device header type)             |
+| Byte 1    | Format: 0x01 (JSON)                         |
+| Byte 2    | Compressed: 0x00 (none) or 0x01 (zlib)      |
+| Byte 3    | Flags: 0x01 (request) or 0x00 (response)    |
+| Bytes 4-7 | Reserved: 0x00 0x00 0x00 0x00               |
+| Byte 8    | Length (single byte)                        |
+| Bytes 9+  | Header data (JSON, possibly zlib compressed) |
+
+#### Body Section (8 bytes + data) — standard binme format
+
+| Offset    | Description                                          |
+|-----------|------------------------------------------------------|
+| Byte 0    | Type: 0x02 (body)                                    |
+| Byte 1    | Format: 0x01 (JSON), 0x02 (string), 0x03 (binary)    |
+| Byte 2    | Compressed: 0x00 (none) or 0x01 (zlib)               |
+| Byte 3    | Reserved: 0x00                                       |
+| Bytes 4-7 | Length (big-endian uint32)                           |
+| Bytes 8+  | Body data                                            |
 
 ### Binme Constants
 
