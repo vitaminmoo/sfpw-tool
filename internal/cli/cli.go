@@ -66,12 +66,15 @@ func (c *TuiCmd) Run(globals *CLI) error {
 // --- Device Commands ---
 
 type DeviceCmd struct {
-	Info     DeviceInfoCmd     `cmd:"" help:"Get device info"`
-	Stats    DeviceStatsCmd    `cmd:"" help:"Get device statistics (battery, signal, uptime)"`
-	Settings DeviceSettingsCmd `cmd:"" help:"Get device settings"`
-	Bt       DeviceBtCmd       `cmd:"" help:"Get bluetooth parameters"`
-	Version  DeviceVersionCmd  `cmd:"" help:"Read device info from BLE characteristic"`
-	Reboot   DeviceRebootCmd   `cmd:"" help:"Reboot the device"`
+	Info       DeviceInfoCmd       `cmd:"" help:"Get device info"`
+	Stats      DeviceStatsCmd      `cmd:"" help:"Get device statistics (battery, signal, uptime)"`
+	Settings   DeviceSettingsCmd   `cmd:"" help:"Get device settings"`
+	Bt         DeviceBtCmd         `cmd:"" help:"Get bluetooth parameters"`
+	Version    DeviceVersionCmd    `cmd:"" help:"Read device info from BLE characteristic"`
+	Reboot     DeviceRebootCmd     `cmd:"" help:"Reboot the device"`
+	SetName    DeviceSetNameCmd    `cmd:"" name:"set-name" help:"Set device friendly name (max 28 chars)"`
+	PowerOff   DevicePowerOffCmd   `cmd:"" name:"power-off" help:"Power off the device"`
+	ChargeCtrl DeviceChargeCtrlCmd `cmd:"" name:"charge-ctrl" help:"Toggle battery charging mode"`
 }
 
 type DeviceInfoCmd struct{}
@@ -134,12 +137,44 @@ func (c *DeviceRebootCmd) Run(globals *CLI) error {
 	return nil
 }
 
+type DeviceSetNameCmd struct {
+	Name string `arg:"" help:"New device name (max 28 characters)"`
+}
+
+func (c *DeviceSetNameCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	device := ble.Connect()
+	defer device.Disconnect()
+	commands.SetName(device, c.Name)
+	return nil
+}
+
+type DevicePowerOffCmd struct{}
+
+func (c *DevicePowerOffCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	device := ble.Connect()
+	defer device.Disconnect()
+	commands.PowerOff(device)
+	return nil
+}
+
+type DeviceChargeCtrlCmd struct{}
+
+func (c *DeviceChargeCtrlCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	device := ble.Connect()
+	defer device.Disconnect()
+	commands.ChargeCtrl(device)
+	return nil
+}
+
 // --- Module Commands ---
 
 type ModuleCmd struct {
-	Info ModuleInfoCmd   `cmd:"" help:"Get details about the inserted SFP module"`
-	Read ModuleReadCmd   `cmd:"" help:"Read EEPROM from physical module to file"`
-	Ddm  ModuleDdmCmd    `cmd:"" help:"Read DDM (Digital Diagnostic Monitoring) data"`
+	Info ModuleInfoCmd `cmd:"" help:"Get details about the inserted SFP module"`
+	Read ModuleReadCmd `cmd:"" help:"Read EEPROM from physical module to file"`
+	Ddm  ModuleDdmCmd  `cmd:"" help:"Read DDM (Digital Diagnostic Monitoring) data"`
 }
 
 type ModuleInfoCmd struct{}
@@ -177,9 +212,10 @@ func (c *ModuleDdmCmd) Run(globals *CLI) error {
 // --- Snapshot Commands ---
 
 type SnapshotCmd struct {
-	Info  SnapshotInfoCmd  `cmd:"" help:"Get snapshot buffer status"`
-	Read  SnapshotReadCmd  `cmd:"" help:"Read snapshot buffer to file"`
-	Write SnapshotWriteCmd `cmd:"" help:"Write EEPROM file to snapshot buffer"`
+	Info    SnapshotInfoCmd    `cmd:"" help:"Get snapshot buffer status"`
+	Read    SnapshotReadCmd    `cmd:"" help:"Read snapshot buffer to file"`
+	Write   SnapshotWriteCmd   `cmd:"" help:"Write EEPROM file to snapshot buffer"`
+	Recover SnapshotRecoverCmd `cmd:"" help:"Recover module from device database by serial number"`
 }
 
 type SnapshotInfoCmd struct{}
@@ -259,6 +295,19 @@ func (c *SnapshotWriteCmd) Run(globals *CLI) error {
 	device := ble.Connect()
 	defer device.Disconnect()
 	commands.SnapshotWrite(device, filePath)
+	return nil
+}
+
+type SnapshotRecoverCmd struct {
+	SerialNumber string `arg:"" help:"Serial number of module to recover from device database"`
+	Wavelength   int    `optional:"" help:"Override wavelength in restored snapshot (nm)"`
+}
+
+func (c *SnapshotRecoverCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	device := ble.Connect()
+	defer device.Disconnect()
+	commands.Recover(device, c.SerialNumber, c.Wavelength)
 	return nil
 }
 
@@ -658,10 +707,7 @@ func (p *CLIProgressBar) Update(current, total int64, desc string) {
 		return
 	}
 	percent := float64(current) / float64(total) * 100
-	filled := int(float64(p.width) * float64(current) / float64(total))
-	if filled > p.width {
-		filled = p.width
-	}
+	filled := min(int(float64(p.width)*float64(current)/float64(total)), p.width)
 	bar := strings.Repeat("=", filled) + strings.Repeat(" ", p.width-filled)
 	fmt.Printf("\r  %s [%s] %.1f%%", desc, bar, percent)
 }
@@ -725,6 +771,7 @@ type DebugCmd struct {
 	TestEncode  DebugTestEncodeCmd  `cmd:"" name:"test-encode" help:"Test protocol encoding"`
 	TestPackets DebugTestPacketsCmd `cmd:"" name:"test-packets" help:"Decode packets from TSV file"`
 	ParseEeprom DebugParseEepromCmd `cmd:"" name:"parse-eeprom" help:"Parse SFP/QSFP EEPROM file"`
+	RawAPI      DebugRawAPICmd      `cmd:"" name:"raw-api" help:"Send raw API request"`
 }
 
 type DebugExploreCmd struct{}
@@ -772,6 +819,20 @@ type DebugParseEepromCmd struct {
 func (c *DebugParseEepromCmd) Run(globals *CLI) error {
 	config.Verbose = globals.Verbose
 	commands.ParseEEPROM(c.File)
+	return nil
+}
+
+type DebugRawAPICmd struct {
+	Method string `arg:"" help:"HTTP method (GET or POST)"`
+	Path   string `arg:"" help:"API path (e.g., /xsfp/sync/cancel)"`
+	Body   string `optional:"" help:"Request body (optional)"`
+}
+
+func (c *DebugRawAPICmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+	device := ble.Connect()
+	defer device.Disconnect()
+	commands.RawAPI(device, c.Method, c.Path, c.Body)
 	return nil
 }
 

@@ -10,8 +10,8 @@ import (
 
 // ESP32 image format constants
 const (
-	ESP32ImageMagic    = 0xE9
-	ESP32HeaderSize    = 24 // Main image header size
+	ESP32ImageMagic     = 0xE9
+	ESP32HeaderSize     = 24 // Main image header size
 	ESP32SegmentHdrSize = 8  // Segment header size (load_addr + data_len)
 )
 
@@ -72,7 +72,7 @@ func ParseESP32ImageReader(r io.ReadSeeker) (*ESP32Image, error) {
 	}
 
 	// Read segments
-	for i := 0; i < int(img.Header.SegmentCount); i++ {
+	for i := range int(img.Header.SegmentCount) {
 		var seg ESP32Segment
 
 		// Read segment header

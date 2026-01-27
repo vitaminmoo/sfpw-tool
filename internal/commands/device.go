@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/vitaminmoo/sfpw-tool/internal/api"
 	"github.com/vitaminmoo/sfpw-tool/internal/ble"
@@ -284,6 +285,44 @@ func Firmware(device bluetooth.Device) {
 	GetAndDisplayJSON(device, "/fw")
 }
 
+// SetName sets the device friendly name (max 28 characters)
+func SetName(device bluetooth.Device, name string) {
+	// Firmware stores name in 29-byte buffer (including null terminator)
+	const maxNameLen = 28
+
+	if len(name) > maxNameLen {
+		log.Fatalf("Name too long: %d characters (max %d)", len(name), maxNameLen)
+	}
+
+	if len(name) == 0 {
+		log.Fatal("Name cannot be empty")
+	}
+
+	ctx := ble.SetupAPI(device)
+
+	fmt.Printf("Setting device name to: %s\n", name)
+
+	// Try JSON format for the body
+	body := fmt.Sprintf(`{"name":"%s"}`, name)
+
+	resp, respBody, err := ctx.SendRequest("POST", ctx.APIPath("/name"), []byte(body), 10*time.Second)
+	if err != nil {
+		log.Fatal("API request failed:", err)
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		fmt.Println("Name updated successfully")
+	case 304:
+		fmt.Println("Name unchanged (already set to this value)")
+	default:
+		fmt.Printf("Error: status %d\n", resp.StatusCode)
+		if len(respBody) > 0 {
+			fmt.Printf("Body: %s\n", string(respBody))
+		}
+	}
+}
+
 // Reboot reboots the device
 func Reboot(device bluetooth.Device) {
 	ctx := ble.SetupAPI(device)
@@ -303,6 +342,38 @@ func Reboot(device bluetooth.Device) {
 		fmt.Printf("Reboot failed: status %d\n", resp.StatusCode)
 		fmt.Printf("Body: %s\n", string(body))
 	}
+}
+
+// PowerOff powers off the device using Service 3 GATT command.
+// The device will shut down and the BLE connection will be lost.
+func PowerOff(device bluetooth.Device) {
+	ctx := ble.SetupGATT(device)
+
+	fmt.Println("Powering off device...")
+
+	// powerOff command doesn't return a response - device shuts down
+	if err := ctx.SendCommandNoResponse("powerOff"); err != nil {
+		// Connection may drop during power off - that's expected
+		fmt.Println("Power off command sent (connection lost - this is normal)")
+		return
+	}
+
+	fmt.Println("Power off command sent")
+}
+
+// ChargeCtrl toggles battery charging mode using Service 3 GATT command.
+func ChargeCtrl(device bluetooth.Device) {
+	ctx := ble.SetupGATT(device)
+
+	fmt.Println("Toggling charge control...")
+
+	resp, err := ctx.SendCommand("chargeCtrl", 5*time.Second)
+	if err != nil {
+		log.Fatal("chargeCtrl command failed:", err)
+	}
+
+	// Response is JSON: {"id":"<MAC>","ret":"ok"}
+	fmt.Printf("Response: %s\n", string(resp))
 }
 
 // DumpAll dumps all read-only API endpoints as raw JSON for archival/debugging.

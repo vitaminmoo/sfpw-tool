@@ -243,6 +243,61 @@ func BinmeDecode(data []byte) (headerJSON []byte, bodyData []byte, err error) {
 	return headerJSON, bodyData, nil
 }
 
+// BinmeEncodeStringBody wraps JSON header with a string body (format=FormatString).
+// Used for form-encoded data like "name=value".
+func BinmeEncodeStringBody(jsonData []byte, bodyData []byte, seqNum uint16) ([]byte, error) {
+	// Compress header JSON
+	compressedHeader, err := zlibCompress(jsonData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compress header: %w", err)
+	}
+
+	// Compress body (string data is still compressed)
+	compressedBody, err := zlibCompress(bodyData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compress body: %w", err)
+	}
+
+	// Build the message
+	var buf bytes.Buffer
+
+	// Header section: 9-byte device header + compressed data
+	headerSection := make([]byte, 9+len(compressedHeader))
+	headerSection[0] = DeviceTypeHeader // type: header section (device uses 0x03)
+	headerSection[1] = FormatJSON       // format: JSON (0x01)
+	headerSection[2] = 0x01             // isCompressed: true
+	headerSection[3] = 0x01             // flags (0x01 for requests)
+	headerSection[4] = 0x00             // reserved
+	headerSection[5] = 0x00             // reserved
+	headerSection[6] = 0x00             // reserved
+	headerSection[7] = 0x00             // reserved
+	headerSection[8] = byte(len(compressedHeader)) // length (single byte)
+	copy(headerSection[9:], compressedHeader)
+
+	// Body section: 8-byte standard binme header + compressed string data
+	bodySection := make([]byte, 8+len(compressedBody))
+	bodySection[0] = DeviceTypeBody // type: body section (0x02)
+	bodySection[1] = FormatString   // format: string (0x02)
+	bodySection[2] = 0x01           // isCompressed: true
+	bodySection[3] = 0x00           // reserved
+	binary.BigEndian.PutUint32(bodySection[4:8], uint32(len(compressedBody)))
+	copy(bodySection[8:], compressedBody)
+
+	// Total message length (excluding device transport header)
+	totalLen := len(headerSection) + len(bodySection)
+
+	// Write device transport header
+	transportHeader := make([]byte, 4)
+	binary.BigEndian.PutUint16(transportHeader[0:2], uint16(totalLen+4))
+	binary.BigEndian.PutUint16(transportHeader[2:4], seqNum)
+
+	buf.Write(transportHeader)
+	buf.Write(headerSection)
+	buf.Write(bodySection)
+
+	return buf.Bytes(), nil
+}
+
 // BinmeEncodeRawBody wraps JSON header with a raw binary body (format=FormatBinary).
 // Used for XSFP write operations that send binary EEPROM data.
 func BinmeEncodeRawBody(jsonData []byte, bodyData []byte, seqNum uint16) ([]byte, error) {

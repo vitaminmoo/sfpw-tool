@@ -198,6 +198,65 @@ func (ctx *APIContext) SendRequest(method, path string, body []byte, timeout tim
 	return &resp, bodyData, nil
 }
 
+// SendStringBodyRequest sends an API request with a string body (for form data like "name=value")
+func (ctx *APIContext) SendStringBodyRequest(method, path string, body []byte, timeout time.Duration) (*protocol.APIResponse, []byte, error) {
+	if err := ctx.enableNotifications(); err != nil {
+		return nil, nil, fmt.Errorf("failed to enable notifications: %w", err)
+	}
+
+	ctx.resetResponseBuffer()
+
+	requestID, seqNum := protocol.NextRequestID()
+
+	req := protocol.APIRequest{
+		Type:      "httpRequest",
+		ID:        requestID,
+		Timestamp: time.Now().UnixMilli(),
+		Method:    method,
+		Path:      path,
+	}
+
+	reqData, err := json.Marshal(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	config.Debugf("JSON request: %s", string(reqData))
+	config.Debugf("String body: %s", string(body))
+
+	dataToSend, err := protocol.BinmeEncodeStringBody(reqData, body, seqNum)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to encode binme: %w", err)
+	}
+
+	config.Debugf("Writing %d bytes...", len(dataToSend))
+	if config.Verbose {
+		util.PrintHexDump(dataToSend)
+	}
+	_, err = ctx.WriteChar.WriteWithoutResponse(dataToSend)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to write request: %w", err)
+	}
+
+	// Wait for response
+	data, err := ctx.waitForResponse(timeout)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	headerJSON, bodyData, err := protocol.BinmeDecode(data)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	var resp protocol.APIResponse
+	if err := json.Unmarshal(headerJSON, &resp); err != nil {
+		return nil, nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &resp, bodyData, nil
+}
+
 // SendRawBodyRequest sends an API request with a raw binary body (for XSFP writes)
 // Large packets are fragmented across multiple BLE writes.
 func (ctx *APIContext) SendRawBodyRequest(method, path string, body []byte, timeout time.Duration) (*protocol.APIResponse, []byte, error) {

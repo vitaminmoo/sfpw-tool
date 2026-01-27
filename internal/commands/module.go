@@ -18,6 +18,11 @@ import (
 func ModuleInfo(device bluetooth.Device) {
 	ctx := ble.SetupAPI(device)
 
+	// Cancel any in-progress sync operation
+	if err := CancelXSFPSync(ctx); err != nil {
+		log.Fatal(err)
+	}
+
 	fmt.Println("Getting module details...")
 
 	// The XSFP endpoints use the same base path structure
@@ -47,6 +52,12 @@ func ModuleInfo(device bluetooth.Device) {
 // If filename is not empty, also saves to that file.
 func ModuleRead(device bluetooth.Device, filename string) {
 	ctx := ble.SetupAPI(device)
+
+	// Cancel any in-progress sync operation
+	if err := CancelXSFPSync(ctx); err != nil {
+		log.Fatal(err)
+	}
+
 	data, err := ModuleReadData(ctx)
 	if err != nil {
 		log.Fatal(err)

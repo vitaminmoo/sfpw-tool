@@ -17,6 +17,11 @@ import (
 func SnapshotInfo(device bluetooth.Device) {
 	ctx := ble.SetupAPI(device)
 
+	// Cancel any in-progress sync operation
+	if err := CancelXSFPSync(ctx); err != nil {
+		log.Fatal(err)
+	}
+
 	fmt.Println("Getting snapshot info...")
 
 	resp, body, err := ctx.SendRequest("GET", ctx.APIPath("/xsfp/sync/start"), nil, 10*time.Second)
@@ -39,6 +44,12 @@ func SnapshotInfo(device bluetooth.Device) {
 // If filename is not empty, also saves to that file.
 func SnapshotRead(device bluetooth.Device, filename string) {
 	ctx := ble.SetupAPI(device)
+
+	// Cancel any in-progress sync operation
+	if err := CancelXSFPSync(ctx); err != nil {
+		log.Fatal(err)
+	}
+
 	data, err := SnapshotReadData(ctx)
 	if err != nil {
 		log.Fatal(err)
@@ -130,6 +141,11 @@ func SnapshotReadData(ctx *ble.APIContext) ([]byte, error) {
 func SnapshotWrite(device bluetooth.Device, filename string) {
 	ctx := ble.SetupAPI(device)
 
+	// Cancel any in-progress sync operation
+	if err := CancelXSFPSync(ctx); err != nil {
+		log.Fatal(err)
+	}
+
 	// Read the EEPROM file
 	eepromData, err := os.ReadFile(filename)
 	if err != nil {
@@ -198,4 +214,46 @@ func SnapshotWrite(device bluetooth.Device, filename string) {
 	}
 
 	fmt.Println("\nUse the device screen to apply snapshot to module.")
+}
+
+// Recover restores module EEPROM from saved "golden snapshot" in device database.
+// The device stores snapshots of modules it has read, keyed by serial number.
+// This command retrieves a stored snapshot and loads it into the snapshot buffer.
+func Recover(device bluetooth.Device, serialNumber string, wavelength int) {
+	ctx := ble.SetupAPI(device)
+
+	fmt.Printf("Recovering snapshot for S/N: %s\n", serialNumber)
+	if wavelength > 0 {
+		fmt.Printf("Overriding wavelength to: %d nm\n", wavelength)
+	}
+
+	// Build request body
+	var reqBody string
+	if wavelength > 0 {
+		reqBody = fmt.Sprintf(`{"sn":"%s","wavelength":%d}`, serialNumber, wavelength)
+	} else {
+		reqBody = fmt.Sprintf(`{"sn":"%s"}`, serialNumber)
+	}
+
+	resp, body, err := ctx.SendRequest("POST", ctx.APIPath("/xsfp/recover"), []byte(reqBody), 10*time.Second)
+	if err != nil {
+		log.Fatal("API request failed:", err)
+	}
+
+	switch resp.StatusCode {
+	case 200:
+		fmt.Println("Snapshot recovered successfully!")
+		if len(body) > 0 {
+			PrintJSON(body)
+		}
+		fmt.Println("\nUse the device screen to apply snapshot to module.")
+	case 404:
+		fmt.Printf("Error: No golden snapshot found for S/N '%s'\n", serialNumber)
+		fmt.Println("The device database does not contain a saved snapshot for this module.")
+	default:
+		fmt.Printf("Error: status %d\n", resp.StatusCode)
+		if len(body) > 0 {
+			fmt.Printf("Body: %s\n", string(body))
+		}
+	}
 }

@@ -8,9 +8,14 @@ import (
 	"log"
 	"os"
 	"strings"
+	"time"
 
+	"github.com/vitaminmoo/sfpw-tool/internal/ble"
 	"github.com/vitaminmoo/sfpw-tool/internal/eeprom"
 	"github.com/vitaminmoo/sfpw-tool/internal/protocol"
+	"github.com/vitaminmoo/sfpw-tool/internal/util"
+
+	"tinygo.org/x/bluetooth"
 )
 
 // TestEncode tests the encoding without connecting to device
@@ -250,5 +255,55 @@ func ParseEEPROM(filename string) {
 		fmt.Printf("=== Unknown Module Type (identifier: 0x%02X) ===\n\n", identifier)
 		// Try SFP parsing anyway
 		eeprom.ParseSFPDetailed(data)
+	}
+}
+
+// RawAPI sends a raw API request and displays the response
+func RawAPI(device bluetooth.Device, method, path, body string) {
+	ctx := ble.SetupAPI(device)
+
+	// Prepend MAC path if not already present
+	fullPath := path
+	if !strings.HasPrefix(path, "/api/") {
+		fullPath = ctx.APIPath(path)
+	}
+
+	fmt.Printf("Sending %s %s\n", method, fullPath)
+
+	var bodyBytes []byte
+	if body != "" {
+		bodyBytes = []byte(body)
+		fmt.Printf("Body: %s\n", body)
+	}
+
+	resp, respBody, err := ctx.SendRequest(method, fullPath, bodyBytes, 10*time.Second)
+	if err != nil {
+		log.Fatalf("Request failed: %v", err)
+	}
+
+	fmt.Printf("\nResponse status: %d\n", resp.StatusCode)
+	fmt.Printf("Response body (%d bytes):\n", len(respBody))
+
+	if len(respBody) == 0 {
+		fmt.Println("  (empty)")
+		return
+	}
+
+	// Try to pretty-print as JSON
+	var prettyJSON map[string]any
+	if err := json.Unmarshal(respBody, &prettyJSON); err == nil {
+		formatted, _ := json.MarshalIndent(prettyJSON, "  ", "  ")
+		fmt.Printf("  %s\n", string(formatted))
+	} else if util.IsTextData(respBody) {
+		fmt.Printf("  %s\n", string(respBody))
+	} else {
+		// Binary data - hex dump
+		for i := 0; i < len(respBody); i += 16 {
+			end := i + 16
+			if end > len(respBody) {
+				end = len(respBody)
+			}
+			fmt.Printf("  %04x: % x\n", i, respBody[i:end])
+		}
 	}
 }

@@ -151,6 +151,21 @@ func AbortSIFIfRunning(ctx *ble.APIContext) error {
 	return nil
 }
 
+// CancelXSFPSync cancels any in-progress XSFP sync operation.
+// Safe to call even if no operation is in progress (device returns 200 either way).
+func CancelXSFPSync(ctx *ble.APIContext) error {
+	resp, _, err := ctx.SendRequest("POST", ctx.APIPath("/xsfp/sync/cancel"), nil, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to cancel XSFP sync: %w", err)
+	}
+
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("unexpected status from sync cancel: %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 // ConfirmAction prompts the user to type 'yes' to continue.
 // Returns true if confirmed, false otherwise.
 func ConfirmAction(prompt string) bool {

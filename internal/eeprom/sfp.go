@@ -177,7 +177,7 @@ func ParseSFPDetailed(data []byte) {
 	fmt.Println("\n--- Checksums ---")
 	// CC_BASE covers bytes 0-62
 	var ccBase byte
-	for i := 0; i < 63; i++ {
+	for i := range 63 {
 		ccBase += data[i]
 	}
 	storedCCBase := data[63]

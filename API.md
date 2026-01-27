@@ -53,11 +53,13 @@ The device exposes four BLE services:
 
 Simple text-based command interface for device control.
 
-| Characteristic | UUID                                 | Handle | Description                       |
-| -------------- | ------------------------------------ | ------ | --------------------------------- |
-| Command        | 9280f26c-a56f-43ea-b769-d5d732e1ac67 | 0x10   | Write commands, receive responses |
-| Device Info    | dc272a22-43f2-416b-8fa5-63a071542fac | 0x11   | Read-only device info JSON        |
-| PIN            | d587c47f-ac6e-4388-a31c-e6cd380ba043 | 0x15   | Static PIN value (read-only)      |
+| Characteristic | UUID                                 | Handle | Description                                    |
+| -------------- | ------------------------------------ | ------ | ---------------------------------------------- |
+| (unused)       | 9280f26c-a56f-43ea-b769-d5d732e1ac67 | 0x10   | Not used for Service 3 (used by Service 4)    |
+| Device Info    | dc272a22-43f2-416b-8fa5-63a071542fac | 0x11   | **READ/WRITE**: Device info + text commands   |
+| PIN            | d587c47f-ac6e-4388-a31c-e6cd380ba043 | 0x15   | Static PIN value `0x3412` (read-only)          |
+
+**Important:** Despite sharing UUIDs with Service 4, Service 3 commands (getVer, powerOff, chargeCtrl) must be written to the **Device Info characteristic (dc272a22)**, NOT the Command characteristic. Responses also come via notification on dc272a22.
 
 ### Service 4: BLE API (0b9676ee-8352-440a-bf80-61541d578fcf)
 
@@ -74,7 +76,9 @@ REST-like API using binary envelope protocol.
 
 ## Service 3: Direct GATT Commands
 
-Service 3 provides a simple text-based command interface. Write plain text strings to the Command characteristic and receive responses via GATT notification.
+Service 3 provides a simple text-based command interface. Write plain text command strings to the **Device Info characteristic (dc272a22)** and receive responses via GATT notification on the same characteristic.
+
+**Note:** The firmware callback `ui_gatt_service_factory_cb` handles both READ and WRITE operations on dc272a22.
 
 ### Reading Device Info (dc272a22 characteristic)
 
@@ -128,9 +132,9 @@ Powers off the device. No response is sent (device shuts down).
 
 **Sequence:**
 
-1. Write "powerOff" to command characteristic
+1. Write "powerOff" to Device Info characteristic (dc272a22)
 2. Device logs "Power off" message
-3. Device initiates software power-off sequence
+3. Device calls `mcu_device_set_power()` after 1 second delay
 4. Connection is lost as device shuts down
 
 ### Command: chargeCtrl
@@ -399,11 +403,17 @@ Reboots the device. The BLE connection will drop during reboot.
 
 #### POST /api/1.0/{mac}/name
 
-Sets the device friendly name.
+Sets the device friendly name. Maximum 28 characters (stored in 29-byte buffer with null terminator).
 
-**Request Body:** `name=<new_name>`
+**Request Body (JSON):**
+
+```json
+{"name":"<new_name>"}
+```
 
 **Response:** HTTP 200 on success, HTTP 304 if unchanged, HTTP 500 on error
+
+**Storage:** Name is persisted in NVS under namespace "UI_BLE" with key "FRI_NAME".
 
 ---
 
