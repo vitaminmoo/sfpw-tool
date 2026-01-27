@@ -385,37 +385,37 @@ Reading the dc272a22 characteristic returns device information:
 
 Returns device information (same as reading the characteristic).
 
-| | |
-|---|---|
-| **Request** | `getVer` |
-| **Response** | JSON (same format as reading characteristic) |
+| Field    | Value                                       |
+|----------|---------------------------------------------|
+| Request  | `getVer`                                    |
+| Response | JSON (same format as reading characteristic) |
 
 ### Command: powerOff
 
 Powers off the device.
 
-| | |
-|---|---|
-| **Request** | `powerOff` |
-| **Response** | None (device shuts down after 1 second) |
+| Field    | Value                                    |
+|----------|------------------------------------------|
+| Request  | `powerOff`                               |
+| Response | None (device shuts down after 1 second)  |
 
 ### Command: chargeCtrl
 
 Controls battery charging behavior.
 
-| | |
-|---|---|
-| **Request** | `chargeCtrl` |
-| **Response** | `{"id": "<MAC>", "ret": "ok"}` |
+| Field    | Value                          |
+|----------|--------------------------------|
+| Request  | `chargeCtrl`                   |
+| Response | `{"id": "<MAC>", "ret": "ok"}` |
 
 Toggles between charging modes (normal/high current/disabled) depending on battery management IC configuration.
 
 ### PIN Characteristic
 
-| | |
-|---|---|
-| **Read Value** | `0x3412` (2 bytes, little-endian) |
-| **Purpose** | Static value for app pairing verification |
+| Field      | Value                                    |
+|------------|------------------------------------------|
+| Read Value | `0x3412` (2 bytes, little-endian)        |
+| Purpose    | Static value for app pairing verification |
 
 > [!NOTE]
 > Provides NO actual security - any BLE client can read this value with no authentication.
@@ -524,21 +524,21 @@ Returns Bluetooth parameters.
 
 Reboots the device. BLE connection will drop during reboot.
 
-| | |
-|---|---|
-| **Request Body** | None |
-| **Response** | 200 (connection may drop before response) |
+| Field        | Value                                    |
+|--------------|------------------------------------------|
+| Request Body | None                                     |
+| Response     | 200 (connection may drop before response) |
 
 #### POST /api/1.0/{mac}/name
 
 Sets the device friendly name.
 
-| | |
-|---|---|
-| **Request Body** | `{"name": "<new_name>"}` |
-| **Max Length** | 28 characters |
-| **Response** | 200 success, 304 unchanged, 500 error |
-| **Storage** | NVS namespace "UI_BLE", key "FRI_NAME" |
+| Field        | Value                                    |
+|--------------|------------------------------------------|
+| Request Body | `{"name": "<new_name>"}`                 |
+| Max Length   | 28 characters                            |
+| Response     | 200 success, 304 unchanged, 500 error    |
+| Storage      | NVS namespace "UI_BLE", key "FRI_NAME"   |
 
 ---
 
@@ -604,10 +604,10 @@ Returns information about current snapshot buffer.
 
 Initialize a write transfer to the snapshot buffer.
 
-| | |
-|---|---|
-| **Request Body** | `{"size": 512}` |
-| **Response** | 200 on success |
+| Field        | Value             |
+|--------------|-------------------|
+| Request Body | `{"size": 512}`   |
+| Response     | 200 on success    |
 
 #### GET /api/1.0/{mac}/xsfp/sync/data
 
@@ -619,10 +619,10 @@ Read snapshot data from the buffer.
 
 Write snapshot data chunk.
 
-| | |
-|---|---|
-| **Request Body** | Raw binary EEPROM data |
-| **Response** | 200 on success |
+| Field        | Value                  |
+|--------------|------------------------|
+| Request Body | Raw binary EEPROM data |
+| Response     | 200 on success         |
 
 #### POST /api/1.0/{mac}/xsfp/sync/cancel
 
@@ -700,9 +700,9 @@ The SIF protocol returns a **tar archive** containing device logs and module EEP
 
 Initiates a SIF read operation.
 
-| | |
-|---|---|
-| **Request Body** | None |
+| Field        | Value |
+|--------------|-------|
+| Request Body | None  |
 
 **Response:**
 ```json
@@ -806,19 +806,19 @@ Returns firmware status.
 
 Starts a firmware update.
 
-| | |
-|---|---|
-| **Request Body** | `size=<firmware_size_bytes>` |
-| **Response** | 200 success, 400 invalid size, 500 error |
+| Field        | Value                                     |
+|--------------|-------------------------------------------|
+| Request Body | `size=<firmware_size_bytes>`              |
+| Response     | 200 success, 400 invalid size, 500 error  |
 
 #### POST /api/1.0/{mac}/fw/data
 
 Sends firmware data chunk.
 
-| | |
-|---|---|
-| **Request Body** | Raw binary firmware data |
-| **Response** | 200 success, 400 error |
+| Field        | Value                    |
+|--------------|--------------------------|
+| Request Body | Raw binary firmware data |
+| Response     | 200 success, 400 error   |
 
 #### POST /api/1.0/{mac}/fw/abort
 
@@ -867,14 +867,13 @@ Entry structure changed between firmware versions:
 
 **Entry Structure (1.1.1+ — 16 bytes):**
 
-```
-Offset  Size  Field
-0x00    4     read_only (uint32) — Skip if non-zero
-0x04    4     part_number (char*) — Pointer to string
-0x08    1     locked (bool) — Module requires unlock
-0x09    4     password[4] — 4-byte unlock password
-0x0D    3     flags[3] — Writable pages bitmask
-```
+| Offset | Size | Field                                   |
+|--------|------|-----------------------------------------|
+| 0x00   | 4    | read_only (uint32) — Skip if non-zero   |
+| 0x04   | 4    | part_number (char*) — Pointer to string |
+| 0x08   | 1    | locked (bool) — Module requires unlock  |
+| 0x09   | 4    | password[4] — 4-byte unlock password    |
+| 0x0D   | 3    | flags[3] — Writable pages bitmask       |
 
 ### Flags Field
 
