@@ -70,7 +70,7 @@ This document describes the BLE API protocol for the UACC SFP Wizard device.
 
 ## Firmware Version Compatibility
 
-Tested firmware versions: **1.0.10**, **1.1.0**, **1.1.1**, **1.1.3**
+Tested firmware versions: **1.0.5**, **1.0.10**, **1.1.0**, **1.1.1**, **1.1.3**
 
 | Endpoint | 1.0.10 | 1.1.0 | 1.1.1+ | Notes |
 |----------|:------:|:-----:|:------:|-------|
@@ -860,10 +860,14 @@ Entry structure changed between firmware versions:
 
 | Firmware | Entry Size | Fields |
 |----------|------------|--------|
-| 1.0.x, 1.1.0 | 20 bytes | read_only, part_number*, locked, password[4], flags[3], cable_length |
+| 1.0.5 | 16 bytes | read_only, part_number*, locked, password[4], flags[3] |
+| 1.0.10, 1.1.0 | 20 bytes | read_only, part_number*, locked, password[4], flags[3], cable_length |
 | 1.1.1+ | 16 bytes | read_only, part_number*, locked, password[4], flags[3] |
 
-**Entry Structure (1.1.1+ — 16 bytes):**
+> [!NOTE]
+> The `cable_length` field was added in 1.0.10 and removed in 1.1.1. It stores AOC cable lengths (5, 10, 20, 30 meters) matching part numbers like AOC-SFP10-5M. A getter function exists in a vtable (0x4201e65c in 1.0.10, 0x4201f230 in 1.1.0) but has no direct callers—possibly called via virtual dispatch or dead code.
+
+**Entry Structure (16-byte — 1.0.5, 1.1.1+):**
 
 | Offset | Size | Field                                   |
 |--------|------|-----------------------------------------|
@@ -872,6 +876,17 @@ Entry structure changed between firmware versions:
 | 0x08   | 1    | locked (bool) — Module requires unlock  |
 | 0x09   | 4    | password[4] — 4-byte unlock password    |
 | 0x0D   | 3    | flags[3] — Writable pages bitmask       |
+
+**Entry Structure (20-byte — 1.0.10, 1.1.0):**
+
+| Offset | Size | Field                                   |
+|--------|------|-----------------------------------------|
+| 0x00   | 4    | read_only (uint32) — Skip if non-zero   |
+| 0x04   | 4    | part_number (char*) — Pointer to string |
+| 0x08   | 1    | locked (bool) — Module requires unlock  |
+| 0x09   | 4    | password[4] — 4-byte unlock password    |
+| 0x0D   | 3    | flags[3] — Writable pages bitmask       |
+| 0x10   | 4    | cable_length (int32) — AOC length in meters (unused) |
 
 ### Flags Field
 
@@ -891,10 +906,28 @@ Entry structure changed between firmware versions:
 - **1.0.10:** First match by part number, fallback tries ALL unique passwords from entire database
 - **1.1.3:** Collects all matching entries, deduplicates by password, tries each until success
 
+### Unlock Verification (1.0.10+)
+
+Starting in 1.0.10, the firmware verifies that unlock actually succeeded:
+
+1. After sending the password, reads a marker cell from the module
+2. XORs the value with 0xFF (toggles all bits)
+3. Attempts to write the toggled value back
+4. If write succeeds → module is unlocked, restore original value
+5. If write fails → try next password in the list
+
+**1.0.5 does NOT verify** — it sends the password and assumes success after a 500ms wait. Modules that appeared to work in 1.0.5 may have never actually been unlocked; 1.0.10's verification would correctly detect these failures.
+
+Key functions (1.0.10):
+- Verify handler: 0x42021120
+- Next password handler: 0x4202123c
+- State machine: 0x42020d8c
+
 ### Database Summary
 
 | Firmware | Entries | Entry Size | Unique Passwords |
 |----------|---------|------------|------------------|
+| 1.0.5 | 54 | 16 bytes | 5 |
 | 1.0.10 | 54 | 20 bytes | 5 |
 | 1.1.0 | 54 | 20 bytes | 5 |
 | 1.1.1 | 58 | 16 bytes | 6 |

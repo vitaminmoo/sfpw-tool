@@ -5,13 +5,17 @@ import (
 )
 
 // PasswordEntry represents an entry in the SFP password database.
+// Entry size varies by firmware version:
+//   - 1.0.5: 16 bytes (no cable_length)
+//   - 1.0.10, 1.1.0: 20 bytes (with cable_length at offset 0x10)
+//   - 1.1.1+: 16 bytes (no cable_length)
 type PasswordEntry struct {
 	ReadOnly    bool
 	PartNumber  string
 	Locked      bool
 	Password    [4]byte
 	Flags       [3]byte
-	CableLength int32 // Only present in 20-byte entries (older firmware)
+	CableLength int32 // Only present in 20-byte entries (1.0.10, 1.1.0)
 }
 
 // PasswordDatabase represents the extracted password database.
@@ -97,10 +101,11 @@ func ExtractPasswordDatabase(img *ESP32Image) (*PasswordDatabase, error) {
 	}
 
 	// Determine version based on entry size
+	// Entry size pattern: 1.0.5=16, 1.0.10=20, 1.1.0=20, 1.1.1+=16
 	if entrySize == 20 {
-		db.Version = "1.0.x (20-byte entries with cable_length)"
+		db.Version = "1.0.10-1.1.0 (20-byte entries with cable_length)"
 	} else {
-		db.Version = "1.1.x (16-byte entries)"
+		db.Version = "1.0.5 or 1.1.1+ (16-byte entries)"
 	}
 
 	return db, nil
