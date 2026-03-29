@@ -4,17 +4,18 @@ import "github.com/charmbracelet/bubbles/key"
 
 // KeyMap defines all keybindings for the TUI.
 type KeyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Left     key.Binding
-	Right    key.Binding
-	Select   key.Binding
-	Back     key.Binding
-	Quit     key.Binding
-	Help     key.Binding
-	Refresh  key.Binding
-	Search   key.Binding
-	Connect  key.Binding
+	Up        key.Binding
+	Down      key.Binding
+	Left      key.Binding
+	Right     key.Binding
+	Select    key.Binding
+	Back      key.Binding
+	Quit      key.Binding
+	Help      key.Binding
+	Refresh   key.Binding
+	Search    key.Binding
+	Connect   key.Binding
+	EditLabel key.Binding
 }
 
 // DefaultKeyMap returns the default vim-style keybindings.
@@ -63,6 +64,10 @@ func DefaultKeyMap() KeyMap {
 		Connect: key.NewBinding(
 			key.WithKeys("c"),
 			key.WithHelp("c", "connect"),
+		),
+		EditLabel: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit label"),
 		),
 	}
 }

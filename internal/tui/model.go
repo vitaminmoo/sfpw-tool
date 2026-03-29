@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"tinygo.org/x/bluetooth"
@@ -117,6 +118,10 @@ type Model struct {
 	filepicker       filepicker.Model
 	filePickerActive bool
 	selectedFilePath string
+
+	// Label editing
+	labelInput   textinput.Model
+	editingLabel bool
 
 	// Components
 	keys    KeyMap
@@ -266,6 +271,9 @@ type firmwareFlashCompleteMsg struct {
 // fwRebootReconnectMsg triggers auto-reconnect after firmware reboot.
 type fwRebootReconnectMsg time.Time
 
+// labelSavedMsg signals that a module label was saved.
+type labelSavedMsg struct{ err error }
+
 // NewModel creates a new TUI model.
 func NewModel() Model {
 	h := help.New()
@@ -307,6 +315,12 @@ func NewModel() Model {
 			View:        ViewFirmware,
 		},
 	}
+
+	// Initialize label text input
+	ti := textinput.New()
+	ti.Placeholder = "Enter label..."
+	ti.CharLimit = 64
+	m.labelInput = ti
 
 	// Initialize file picker for firmware selection
 	fp := filepicker.New()
@@ -591,6 +605,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusMsg = fmt.Sprintf("Snapshot saved to store: %s", store.ShortHash(msg.hash))
 		return m, nil
 
+	case labelSavedMsg:
+		m.editingLabel = false
+		if msg.err != nil {
+			m.errorMsg = fmt.Sprintf("Failed to save label: %v", msg.err)
+			return m, nil
+		}
+		m.loadStoreProfiles()
+		m.statusMsg = "Label saved"
+		return m, nil
+
 	case moduleDetailsMsg:
 		// Always update moduleDetails - use empty struct on error
 		if msg.err == nil && msg.details != nil {
@@ -798,6 +822,21 @@ func (m Model) handleDisconnect() (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Intercept keys during label editing
+	if m.editingLabel {
+		switch msg.Type {
+		case tea.KeyEnter:
+			return m, saveLabelCmd(m.selectedHash, m.labelInput.Value())
+		case tea.KeyEsc:
+			m.editingLabel = false
+			return m, nil
+		default:
+			var cmd tea.Cmd
+			m.labelInput, cmd = m.labelInput.Update(msg)
+			return m, cmd
+		}
+	}
+
 	// Intercept keys during firmware flash: only allow ESC to cancel
 	if m.fwFlashing && m.cancelFlash != nil {
 		if key.Matches(msg, m.keys.Back) || key.Matches(msg, m.keys.Quit) {
@@ -858,6 +897,18 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, scanForDeviceCmd
 		}
 		return m, nil
+
+	case key.Matches(msg, m.keys.EditLabel):
+		if m.view == ViewStoreDetail && m.selectedHash != "" {
+			currentLabel := ""
+			if entry, ok := m.storeProfiles[m.selectedHash]; ok {
+				currentLabel = entry.Label
+			}
+			m.labelInput.SetValue(currentLabel)
+			m.labelInput.Focus()
+			m.editingLabel = true
+			return m, nil
+		}
 	}
 
 	return m, nil
@@ -1527,11 +1578,12 @@ func (m Model) viewStore() string {
 				wavelength = fmt.Sprintf("%dnm", entry.WavelengthNM)
 			}
 
-			line := fmt.Sprintf("%-12s  %-16s  %-16s  %s",
+			line := fmt.Sprintf("%-12s  %-16s  %-16s  %-8s  %s",
 				shortHash,
 				truncate(entry.VendorName, 16),
 				truncate(entry.PartNumber, 16),
-				wavelength)
+				wavelength,
+				truncate(entry.Label, 24))
 
 			if i == m.cursor {
 				b.WriteString(m.styles.MenuItemSelected.Render("> " + line))
@@ -1585,6 +1637,20 @@ func (m Model) viewStoreDetail() string {
 			b.WriteString(m.renderField("Connector", meta.Specs.ConnectorType))
 		}
 		b.WriteString(m.renderField("Sources", fmt.Sprintf("%d", len(meta.Sources))))
+	}
+
+	// Label field
+	b.WriteString("\n")
+	if m.editingLabel {
+		b.WriteString(m.styles.Highlight.Render("Label") + "  " + m.labelInput.View() + "\n")
+	} else {
+		labelVal := entry.Label
+		if labelVal == "" {
+			labelVal = m.styles.Muted.Render("(none)")
+		}
+		b.WriteString(m.renderField("Label", labelVal))
+		b.WriteString(m.styles.Muted.Render("[e] edit label"))
+		b.WriteString("\n")
 	}
 
 	b.WriteString("\n")
@@ -2324,5 +2390,16 @@ func refreshCachedFirmwareCmd() tea.Cmd {
 		}
 		cached, _ := cache.List()
 		return cachedFirmwareMsg{cached: cached}
+	}
+}
+
+// saveLabelCmd saves a user-defined label for a store profile.
+func saveLabelCmd(hash, label string) tea.Cmd {
+	return func() tea.Msg {
+		s, err := store.OpenDefault()
+		if err != nil {
+			return labelSavedMsg{err: err}
+		}
+		return labelSavedMsg{err: s.SetLabel(hash, label)}
 	}
 }
