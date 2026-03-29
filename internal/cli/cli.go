@@ -883,11 +883,12 @@ func (c *StoreListCmd) Run(globals *CLI) error {
 		if entry.WavelengthNM > 0 {
 			wavelength = fmt.Sprintf("%dnm", entry.WavelengthNM)
 		}
-		fmt.Printf("  %-12s  %-16s  %-16s  %s\n",
+		fmt.Printf("  %-12s  %-16s  %-16s  %-8s  %s\n",
 			shortHash,
 			truncate(entry.VendorName, 16),
 			truncate(entry.PartNumber, 16),
-			wavelength)
+			wavelength,
+			entry.Label)
 	}
 
 	return nil
