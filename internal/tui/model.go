@@ -1567,6 +1567,13 @@ func (m Model) viewStore() string {
 	} else {
 		b.WriteString(fmt.Sprintf("%d profile(s)\n\n", len(m.storeProfiles)))
 
+		header := fmt.Sprintf("  %-12s  %-16s  %-16s  %-8s  %s", "Hash", "Vendor", "Part Number", "Wave", "Label")
+		b.WriteString(m.styles.Muted.Render(header))
+		b.WriteString("\n")
+		sep := fmt.Sprintf("  %-12s  %-16s  %-16s  %-8s  %s", "------------", "----------------", "----------------", "--------", "-----")
+		b.WriteString(m.styles.Muted.Render(sep))
+		b.WriteString("\n")
+
 		hashes := m.getSortedHashes()
 		for i, hash := range hashes {
 			entry := m.storeProfiles[hash]
