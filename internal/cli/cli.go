@@ -853,6 +853,7 @@ type StoreCmd struct {
 	Show   StoreShowCmd   `cmd:"" help:"Show details of a stored profile"`
 	Import StoreImportCmd `cmd:"" help:"Import an EEPROM file into the store"`
 	Export StoreExportCmd `cmd:"" help:"Export a profile to a file"`
+	Label  StoreLabelCmd  `cmd:"" help:"Set or clear the label for a stored profile"`
 }
 
 type StoreListCmd struct{}
@@ -877,17 +878,20 @@ func (c *StoreListCmd) Run(globals *CLI) error {
 	}
 
 	fmt.Printf("%d profile(s)\n\n", len(profiles))
+	fmt.Printf("  %-12s  %-16s  %-16s  %-8s  %s\n", "Hash", "Vendor", "Part Number", "Wave", "Label")
+	fmt.Printf("  %-12s  %-16s  %-16s  %-8s  %s\n", "------------", "----------------", "----------------", "--------", "-----")
 	for hash, entry := range profiles {
 		shortHash := store.ShortHash(hash)
 		wavelength := ""
 		if entry.WavelengthNM > 0 {
 			wavelength = fmt.Sprintf("%dnm", entry.WavelengthNM)
 		}
-		fmt.Printf("  %-12s  %-16s  %-16s  %s\n",
+		fmt.Printf("  %-12s  %-16s  %-16s  %-8s  %s\n",
 			shortHash,
 			truncate(entry.VendorName, 16),
 			truncate(entry.PartNumber, 16),
-			wavelength)
+			wavelength,
+			entry.Label)
 	}
 
 	return nil
@@ -937,6 +941,9 @@ func (c *StoreShowCmd) Run(globals *CLI) error {
 	fmt.Printf("Serial:      %s\n", entry.SerialNumber)
 
 	if meta != nil {
+		if meta.Label != "" {
+			fmt.Printf("Label:       %s\n", meta.Label)
+		}
 		if meta.Identity.DateCode != "" {
 			fmt.Printf("Date Code:   %s\n", meta.Identity.DateCode)
 		}
@@ -1035,6 +1042,48 @@ func (c *StoreExportCmd) Run(globals *CLI) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Exported to: %s\n", c.Output)
+	return nil
+}
+
+type StoreLabelCmd struct {
+	Hash  string `arg:"" help:"Profile hash (full or short)"`
+	Label string `arg:"" optional:"" help:"Label to set (omit to clear)"`
+}
+
+func (c *StoreLabelCmd) Run(globals *CLI) error {
+	config.Verbose = globals.Verbose
+
+	s, err := store.OpenDefault()
+	if err != nil {
+		return fmt.Errorf("failed to open store: %w", err)
+	}
+
+	profiles, err := s.ListWithHashes()
+	if err != nil {
+		return fmt.Errorf("failed to list profiles: %w", err)
+	}
+
+	var fullHash string
+	for hash := range profiles {
+		if hash == c.Hash || store.ShortHash(hash) == c.Hash || hash[7:] == c.Hash {
+			fullHash = hash
+			break
+		}
+	}
+
+	if fullHash == "" {
+		return fmt.Errorf("profile not found: %s", c.Hash)
+	}
+
+	if err := s.SetLabel(fullHash, c.Label); err != nil {
+		return fmt.Errorf("failed to set label: %w", err)
+	}
+
+	if c.Label == "" {
+		fmt.Fprintf(os.Stderr, "Label cleared.\n")
+	} else {
+		fmt.Fprintf(os.Stderr, "Label set: %s\n", c.Label)
+	}
 	return nil
 }
 
