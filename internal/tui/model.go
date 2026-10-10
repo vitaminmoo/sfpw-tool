@@ -33,7 +33,6 @@ const (
 	ViewStore
 	ViewStoreDetail
 	ViewFirmware
-	ViewFirmwareSelect // Select a firmware version to install
 	ViewHelp
 )
 
@@ -43,6 +42,14 @@ type MenuItem struct {
 	Description string
 	View        View
 	Action      func() tea.Cmd
+}
+
+// fwMenuItem represents an item in the firmware view's selectable list.
+type fwMenuItem struct {
+	title string
+	desc  string
+	kind  string // "version", "file", "flash"
+	index int    // Index into cachedFirmware (for kind "version")
 }
 
 // Model is the main Bubbletea model for the TUI.
@@ -873,8 +880,6 @@ func (m Model) goBack() (tea.Model, tea.Cmd) {
 	case ViewStoreDetail:
 		m.view = ViewStore
 		m.selectedHash = ""
-	case ViewFirmwareSelect:
-		m.view = ViewFirmware
 	default:
 		m.view = ViewMain
 	}
@@ -983,37 +988,28 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		selectedItem := menuItems[m.cursor].title
-		switch selectedItem {
-		case "Select from Cache":
-			if len(m.cachedFirmware) == 0 {
-				return m, nil
+		item := menuItems[m.cursor]
+		switch item.kind {
+		case "version":
+			// Select this firmware version
+			if item.index < len(m.cachedFirmware) {
+				fw := m.cachedFirmware[item.index]
+				m.selectedFwVersion = fw.Version
+				m.selectedFwPath = fw.Path
+				m.selectedFwSize = fw.FileSize
+				m.selectedFwSHA256 = ""
+				m.fwFlashError = ""
+				m.statusMsg = fmt.Sprintf("Selected %s", fw.Version)
 			}
-			// Go to version selection view
-			m.cursorHistory[m.view] = m.cursor
-			m.view = ViewFirmwareSelect
-			m.cursor = 0
 			return m, nil
-		case "Select from File":
+		case "file":
 			// Activate file picker
 			m.filePickerActive = true
-			// Reset to current working directory
 			if cwd, err := os.Getwd(); err == nil {
 				m.filepicker.CurrentDirectory = cwd
 			}
 			return m, m.filepicker.Init()
-		case "Refresh Cache":
-			if !m.fwSyncing {
-				m.fwSyncing = true
-				m.fwSyncPhase = "fetching"
-				m.fwSyncProgress = 0
-				m.availableFwError = ""
-				return m, tea.Batch(
-					syncFirmwareCacheCmd(),
-					m.spinner.Tick,
-				)
-			}
-		case "Flash Firmware":
+		case "flash":
 			if m.selectedFwPath == "" || m.fwFlashing {
 				return m, nil
 			}
@@ -1035,32 +1031,6 @@ func (m Model) handleSelect() (tea.Model, tea.Cmd) {
 				waitForProgressMsg(ch),
 				m.spinner.Tick,
 			)
-		case "Clear Selection":
-			m.selectedFwVersion = ""
-			m.selectedFwPath = ""
-			m.selectedFwSize = 0
-			m.selectedFwSHA256 = ""
-			m.fwFlashError = ""
-			m.statusMsg = ""
-			// Reset cursor if it's beyond the new menu length
-			newMax := max(len(m.getFirmwareMenuItems())-1, 0)
-			if m.cursor > newMax {
-				m.cursor = newMax
-			}
-			return m, nil
-		}
-
-	case ViewFirmwareSelect:
-		// Select a cached firmware version
-		if m.cursor < len(m.cachedFirmware) {
-			selected := m.cachedFirmware[m.cursor]
-			m.selectedFwVersion = selected.Version
-			m.selectedFwPath = selected.Path
-			m.selectedFwSize = selected.FileSize
-			m.selectedFwSHA256 = "" // We don't have this from cache entry
-			m.view = ViewFirmware
-			m.statusMsg = fmt.Sprintf("Selected %s", selected.Version)
-			return m, nil
 		}
 	}
 	return m, nil
@@ -1075,12 +1045,9 @@ func (m Model) maxCursor() int {
 	case ViewModule:
 		return 1 // 2 menu items: Read Module, Read Snapshot
 	case ViewFirmware:
-		return len(m.getFirmwareMenuItems()) - 1
-	case ViewFirmwareSelect:
-		if len(m.cachedFirmware) == 0 {
-			return 0
-		}
-		return len(m.cachedFirmware) - 1
+		// Menu is empty while syncing; never return -1 or the cursor can go
+		// negative and index out of range once the menu repopulates.
+		return max(len(m.getFirmwareMenuItems())-1, 0)
 	default:
 		return 0
 	}
@@ -1129,8 +1096,6 @@ func (m Model) View() string {
 		content = m.viewStoreDetail()
 	case ViewFirmware:
 		content = m.viewFirmware()
-	case ViewFirmwareSelect:
-		content = m.viewFirmwareSelect()
 	default:
 		content = "Unknown view"
 	}
@@ -1607,8 +1572,6 @@ func (m Model) viewFirmware() string {
 
 	// Show sync progress if syncing
 	if m.fwSyncing {
-		b.WriteString(m.styles.Highlight.Render("Syncing Firmware Cache"))
-		b.WriteString("\n")
 		b.WriteString("  ")
 		b.WriteString(m.spinner.View())
 		if m.fwSyncCurrentVer != "" {
@@ -1640,67 +1603,63 @@ func (m Model) viewFirmware() string {
 	}
 	b.WriteString("\n")
 
-	// Selected firmware (for flashing)
-	b.WriteString(m.styles.Highlight.Render("Selected Version"))
-	b.WriteString("\n")
-
+	// Flash error display
 	if m.fwFlashError != "" {
 		b.WriteString(m.styles.Error.Render("  Error: " + m.fwFlashError))
-		b.WriteString("\n")
-	} else if m.selectedFwVersion != "" {
-		b.WriteString(m.renderField("Version", m.selectedFwVersion))
-		b.WriteString(m.renderField("Size", humanizeBytesShort(m.selectedFwSize)))
-	} else {
-		b.WriteString(m.styles.Muted.Render("  None selected"))
-		b.WriteString("\n")
+		b.WriteString("\n\n")
 	}
-	b.WriteString("\n")
 
-	// Cached firmware versions
-	b.WriteString(m.styles.Highlight.Render("Cached Firmware"))
-	b.WriteString("\n")
-
-	if len(m.cachedFirmware) > 0 {
-		for _, fw := range m.cachedFirmware {
-			marker := "  "
-			if fw.Version == m.selectedFwVersion {
-				marker = "● "
-			}
-			line := fmt.Sprintf("%s%s  (%s)", marker, fw.Version, humanizeBytesShort(fw.FileSize))
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
-	} else if m.fwSyncing {
-		b.WriteString(m.styles.Muted.Render("  Syncing..."))
-		b.WriteString("\n")
-	} else {
-		b.WriteString(m.styles.Muted.Render("  No cached versions"))
-		b.WriteString("\n")
-	}
-	b.WriteString("\n")
-
-	// Build menu items dynamically
+	// Selectable firmware list
 	menuItems := m.getFirmwareMenuItems()
 
 	for i, item := range menuItems {
+		prefix := "  "
 		if i == m.cursor {
-			b.WriteString(m.styles.MenuItemSelected.Render("> " + item.title))
-		} else {
-			b.WriteString(m.styles.MenuItem.Render("  " + item.title))
+			prefix = "> "
 		}
+
+		switch item.kind {
+		case "version":
+			// Show version with selection indicator
+			marker := " "
+			if item.title == m.selectedFwVersion {
+				marker = "●"
+			}
+			line := fmt.Sprintf("%s %s  %s", marker, item.title, item.desc)
+			if i == m.cursor {
+				b.WriteString(m.styles.MenuItemSelected.Render(prefix + line))
+			} else {
+				b.WriteString(m.styles.MenuItem.Render(prefix + line))
+			}
+			b.WriteString("\n")
+		default:
+			// Action items (Select from File, Flash Firmware)
+			if i == m.cursor {
+				b.WriteString(m.styles.MenuItemSelected.Render(prefix + item.title))
+			} else {
+				b.WriteString(m.styles.MenuItem.Render(prefix + item.title))
+			}
+			b.WriteString("\n")
+			b.WriteString(m.styles.Muted.Render("    " + item.desc))
+			b.WriteString("\n")
+		}
+	}
+
+	if len(menuItems) == 0 && !m.fwSyncing {
+		b.WriteString(m.styles.Muted.Render("  No cached versions"))
 		b.WriteString("\n")
-		b.WriteString(m.styles.Muted.Render("    " + item.desc))
-		b.WriteString("\n\n")
 	}
 
 	// Error display
 	if m.availableFwError != "" && !m.fwSyncing {
+		b.WriteString("\n")
 		b.WriteString(m.styles.Error.Render(m.availableFwError))
 		b.WriteString("\n")
 	}
 
 	// Status message
 	if m.statusMsg != "" {
+		b.WriteString("\n")
 		b.WriteString(m.styles.Success.Render(m.statusMsg))
 		b.WriteString("\n")
 	}
@@ -1766,103 +1725,48 @@ func (m Model) viewFirmwareFlashing() string {
 }
 
 // getFirmwareMenuItems returns the dynamic menu items for firmware view.
-func (m Model) getFirmwareMenuItems() []struct{ title, desc string } {
-	var items []struct{ title, desc string }
+// Each cached firmware version is a selectable item, followed by action items.
+func (m Model) getFirmwareMenuItems() []fwMenuItem {
+	var items []fwMenuItem
 
-	// If syncing, show minimal menu
 	if m.fwSyncing {
 		return items
 	}
 
-	// Cached version selection
-	if len(m.cachedFirmware) > 0 {
-		items = append(items, struct{ title, desc string }{
-			"Select from Cache",
-			fmt.Sprintf("Choose from %d cached versions", len(m.cachedFirmware)),
+	// Each cached version as a directly selectable item
+	for i, fw := range m.cachedFirmware {
+		desc := humanizeBytesShort(fw.FileSize)
+		if m.firmware != nil && fw.Version == "v"+m.firmware.FWVersion {
+			desc += "  (installed)"
+		}
+		if fw.Version == m.selectedFwVersion {
+			desc += "  selected"
+		}
+		items = append(items, fwMenuItem{
+			title: fw.Version,
+			desc:  desc,
+			kind:  "version",
+			index: i,
 		})
 	}
 
-	// File selection
-	items = append(items, struct{ title, desc string }{
-		"Select from File",
-		"Choose a local firmware file",
-	})
-
-	// Refresh
-	items = append(items, struct{ title, desc string }{
-		"Refresh Cache",
-		"Re-sync firmware from cloud",
+	// File selection at the same level
+	items = append(items, fwMenuItem{
+		title: "Select from File",
+		desc:  "Choose a local firmware file",
+		kind:  "file",
 	})
 
 	// Flash button if a version is selected and connected
 	if m.selectedFwVersion != "" && !m.fwFlashing && m.connected {
-		items = append(items, struct{ title, desc string }{
-			"Flash Firmware",
-			fmt.Sprintf("Install %s to device", m.selectedFwVersion),
-		})
-	}
-
-	// Clear selection if selected
-	if m.selectedFwVersion != "" {
-		items = append(items, struct{ title, desc string }{
-			"Clear Selection",
-			"Deselect the current firmware",
+		items = append(items, fwMenuItem{
+			title: "Flash Firmware",
+			desc:  fmt.Sprintf("Install %s to device", m.selectedFwVersion),
+			kind:  "flash",
 		})
 	}
 
 	return items
-}
-
-func (m Model) viewFirmwareSelect() string {
-	var b strings.Builder
-
-	// Title bar
-	b.WriteString(m.renderTitleBar("Select Cached Firmware"))
-	b.WriteString("\n\n")
-
-	if len(m.cachedFirmware) == 0 {
-		b.WriteString(m.styles.Muted.Render("No cached firmware versions"))
-		b.WriteString("\n")
-		return b.String()
-	}
-
-	// Header
-	header := fmt.Sprintf("  %-12s  %-10s  %s", "VERSION", "SIZE", "DOWNLOADED")
-	b.WriteString(m.styles.Label.Render(header))
-	b.WriteString("\n\n")
-
-	// List all cached versions
-	for i, fw := range m.cachedFirmware {
-		line := fmt.Sprintf("%-12s  %-10s  %s",
-			fw.Version,
-			humanizeBytesShort(fw.FileSize),
-			fw.Downloaded.Format("2006-01-02 15:04"))
-
-		// Mark current version
-		if m.firmware != nil && fw.Version == "v"+m.firmware.FWVersion {
-			line += " (current)"
-		}
-
-		if i == m.cursor {
-			b.WriteString(m.styles.MenuItemSelected.Render("> " + line))
-		} else {
-			b.WriteString(m.styles.MenuItem.Render("  " + line))
-		}
-		b.WriteString("\n")
-	}
-
-	b.WriteString("\n")
-	b.WriteString(m.styles.Muted.Render("Press Enter to select, Esc to go back"))
-	b.WriteString("\n")
-
-	// Show status message if any
-	if m.statusMsg != "" {
-		b.WriteString("\n")
-		b.WriteString(m.styles.Success.Render(m.statusMsg))
-		b.WriteString("\n")
-	}
-
-	return b.String()
 }
 
 func humanizeBytesShort(b int64) string {
@@ -2284,6 +2188,9 @@ func syncFirmwareCacheCmd() tea.Cmd {
 		if err != nil {
 			return firmwareSyncCompleteMsg{err: fmt.Errorf("fetch error: %w", err)}
 		}
+
+		// Persist manifest metadata (merged with existing so removed upstream versions are kept)
+		cache.SaveMetadata(versions)
 
 		// Download missing versions
 		for i, v := range versions {

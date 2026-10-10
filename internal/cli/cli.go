@@ -450,6 +450,11 @@ func (c *FwDownloadCmd) Run(globals *CLI) error {
 		return err
 	}
 
+	// Persist manifest metadata so `fw list` can sort by release date
+	if err := store.SaveMetadata(versions); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save firmware metadata: %v\n", err)
+	}
+
 	downloaded := 0
 	skipped := 0
 	for _, v := range versions {

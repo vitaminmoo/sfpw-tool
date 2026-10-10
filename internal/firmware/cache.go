@@ -3,11 +3,13 @@ package firmware
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -19,10 +21,11 @@ type FirmwareStore struct {
 
 // FirmwareEntry represents a downloaded firmware file.
 type FirmwareEntry struct {
-	Path       string
-	Version    string
-	FileSize   int64
-	Downloaded time.Time
+	Path        string
+	Version     string
+	FileSize    int64
+	Downloaded  time.Time
+	ReleaseDate time.Time // From manifest metadata, used for sorting
 }
 
 // DefaultFirmwareStorePath returns the default firmware storage directory.
@@ -196,7 +199,8 @@ func (s *FirmwareStore) computeSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// List returns all downloaded firmware entries.
+// List returns all downloaded firmware entries, enriched with release dates
+// from cached metadata and sorted by release date descending.
 func (s *FirmwareStore) List() ([]FirmwareEntry, error) {
 	entries, err := os.ReadDir(s.baseDir)
 	if err != nil {
@@ -204,6 +208,13 @@ func (s *FirmwareStore) List() ([]FirmwareEntry, error) {
 			return nil, nil
 		}
 		return nil, err
+	}
+
+	// Load metadata for release dates
+	metadata, _ := s.LoadMetadata()
+	metaMap := make(map[string]FirmwareVersion)
+	for _, v := range metadata {
+		metaMap[v.Version] = v
 	}
 
 	var result []FirmwareEntry
@@ -219,15 +230,83 @@ func (s *FirmwareStore) List() ([]FirmwareEntry, error) {
 		name := e.Name()
 		version := strings.TrimPrefix(strings.TrimSuffix(name, ".bin"), "sfpw_")
 
-		result = append(result, FirmwareEntry{
+		entry := FirmwareEntry{
 			Path:       filepath.Join(s.baseDir, name),
 			Version:    version,
 			FileSize:   info.Size(),
 			Downloaded: info.ModTime(),
-		})
+		}
+		if meta, ok := metaMap[version]; ok {
+			entry.ReleaseDate = meta.Created
+		}
+		result = append(result, entry)
 	}
 
+	// Sort by release date descending; entries without metadata go to the end
+	sort.Slice(result, func(i, j int) bool {
+		ri, rj := result[i].ReleaseDate, result[j].ReleaseDate
+		if ri.IsZero() && rj.IsZero() {
+			return result[i].Version > result[j].Version
+		}
+		if ri.IsZero() {
+			return false
+		}
+		if rj.IsZero() {
+			return true
+		}
+		return ri.After(rj)
+	})
+
 	return result, nil
+}
+
+// metadataPath returns the path to the metadata cache file.
+func (s *FirmwareStore) metadataPath() string {
+	return filepath.Join(s.baseDir, "metadata.json")
+}
+
+// SaveMetadata persists firmware version metadata from the manifest API.
+// It merges with existing metadata so versions removed from upstream are preserved.
+func (s *FirmwareStore) SaveMetadata(versions []FirmwareVersion) error {
+	existing, _ := s.LoadMetadata()
+
+	metaMap := make(map[string]FirmwareVersion)
+	for _, v := range existing {
+		metaMap[v.Version] = v
+	}
+	for _, v := range versions {
+		metaMap[v.Version] = v
+	}
+
+	merged := make([]FirmwareVersion, 0, len(metaMap))
+	for _, v := range metaMap {
+		merged = append(merged, v)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		return merged[i].Created.After(merged[j].Created)
+	})
+
+	data, err := json.MarshalIndent(merged, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.metadataPath(), data, 0644)
+}
+
+// LoadMetadata loads cached firmware version metadata.
+func (s *FirmwareStore) LoadMetadata() ([]FirmwareVersion, error) {
+	data, err := os.ReadFile(s.metadataPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var versions []FirmwareVersion
+	if err := json.Unmarshal(data, &versions); err != nil {
+		return nil, err
+	}
+	return versions, nil
 }
 
 // Remove removes a specific downloaded version.

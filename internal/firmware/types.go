@@ -45,11 +45,12 @@ type ManifestFilter struct {
 	Channel  string
 }
 
-// DefaultSFPWizardFilter returns the filter for SFP Wizard firmware on ESP32.
+// DefaultSFPWizardFilter returns the filter for SFP Wizard release firmware.
+// Platform is intentionally unfiltered: upstream changed it from "ESP32" to
+// "USFPDA27", and filtering on it caused the manifest to return no results.
 func DefaultSFPWizardFilter() ManifestFilter {
 	return ManifestFilter{
-		Product:  "SFP-Wizard",
-		Platform: "ESP32",
-		Channel:  "release",
+		Product: "SFP-Wizard",
+		Channel: "release",
 	}
 }
