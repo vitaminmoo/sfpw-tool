@@ -25,6 +25,7 @@ type Index struct {
 
 // IndexEntry contains summary info for quick listing.
 type IndexEntry struct {
+	Label        string    `json:"label,omitempty"`
 	VendorName   string    `json:"vendor_name"`
 	PartNumber   string    `json:"part_number"`
 	SerialNumber string    `json:"serial_number"`
@@ -197,6 +198,26 @@ func (s *Store) Export(hash, destPath string) error {
 	return os.WriteFile(destPath, data, 0644)
 }
 
+// SetLabel sets a user-defined label for a profile.
+func (s *Store) SetLabel(hash, label string) error {
+	meta, err := s.GetMetadata(hash)
+	if err != nil {
+		return fmt.Errorf("failed to read metadata: %w", err)
+	}
+	meta.Label = label
+	meta.UpdatedAt = time.Now()
+
+	metaPath := filepath.Join(s.metadataDir, hashToFilename(hash)+".json")
+	metaJSON, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal metadata: %w", err)
+	}
+	if err := os.WriteFile(metaPath, metaJSON, 0644); err != nil {
+		return fmt.Errorf("failed to write metadata: %w", err)
+	}
+	return s.updateIndex(hash, meta)
+}
+
 // Count returns the number of profiles in the store.
 func (s *Store) Count() (int, error) {
 	index, err := s.loadIndex()
@@ -232,6 +253,7 @@ func (s *Store) updateIndex(hash string, meta *Metadata) error {
 	}
 
 	index.Profiles[hash] = IndexEntry{
+		Label:        meta.Label,
 		VendorName:   meta.Identity.VendorName,
 		PartNumber:   meta.Identity.PartNumber,
 		SerialNumber: meta.Identity.SerialNumber,

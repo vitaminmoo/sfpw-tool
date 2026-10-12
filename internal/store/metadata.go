@@ -7,6 +7,7 @@ import (
 
 // Metadata contains parsed information about a module profile.
 type Metadata struct {
+	Label       string    `json:"label,omitempty"`
 	ContentHash string    `json:"content_hash"`
 	ModuleType  string    `json:"module_type"` // "SFP", "QSFP", "QSFP+", "QSFP28"
 	Size        int       `json:"size"`
